@@ -1,0 +1,47 @@
+# This workflow will build a golang project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+
+name: Auto-BGI Build
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+
+  build:
+    runs-on: ${{ matrix.os }}
+    # 声明策略，可以遍历在多环境、不同系统内循环构建 交叉编译
+    strategy:
+      matrix:
+        os: [windows-latest]
+        goarch: [amd64]
+        goos: [windows]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.23.2'
+        cache: false
+
+    - name: Get dependencies
+      run: go mod tidy
+
+    # Go build exe 命令
+    - name: Build exe
+      run: go build -o auto-bgi.exe
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: 1
+
+    - name: 📦 Generate archive
+      uses: actions/upload-artifact@v4
+      with:
+        name: auto-bgi
+        path: auto-bgi.exe
