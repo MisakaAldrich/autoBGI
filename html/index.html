@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>执行状态</title>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: 'Comic Sans MS', 'Segoe UI', sans-serif;
+            background-color: #ffecf5;
+            color: #ff6699;
+            overflow-x: hidden;
+            overflow-y: auto;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><circle cx="50" cy="50" r="5" fill="%23ffcce6" opacity="0.5"/></svg>');
+        }
+
+        body {
+            position: relative;
+            z-index: 1;
+        }
+
+        canvas#animeCanvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .container {
+            position: relative;
+            z-index: 1;
+            width: 90%;
+            max-width: 700px;
+            margin: 60px auto;
+            padding: 20px;
+            border: 2px solid #ff9ecd;
+            border-radius: 20px;
+            background-color: rgba(255, 255, 255, 0.8);
+            box-shadow: 0 0 20px #ffaad5;
+        }
+
+        h1 {
+            font-size: 1em;
+            margin-bottom: 10px;
+            text-shadow: 0 0 5px #ffd1e0;
+            word-break: break-word;
+            color: #ff6699;
+        }
+
+        h1:last-child::after {
+            content: '♡';
+            animation: bounce 1s infinite;
+        }
+
+        @keyframes bounce {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+        }
+
+        button {
+            width: 100%;
+            margin: 12px 0;
+            padding: 14px;
+            font-size: 15px;
+            background-color: #ffd1e0;
+            color: #ff5588;
+            border: 2px solid #ff9ecd;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 0 10px #ffcce6;
+            transition: all 0.2s ease-in-out;
+            font-weight: bold;
+        }
+
+        button:hover {
+            background-color: #ff9ecd;
+            color: white;
+            box-shadow: 0 0 20px #ff9ecd, 0 0 40px #ff9ecd;
+            transform: scale(1.05);
+        }
+
+        @media (max-width: 480px) {
+            h1 {
+                font-size: 0.9em;
+            }
+
+            button {
+                font-size: 14px;
+                padding: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<canvas id="animeCanvas"></canvas>
+
+<!--<audio src="https://vod.ruotongmusic.com/sv/33203264-179ccc83f10/33203264-179ccc83f10.wav" autoplay loop style="display:none"></audio>-->
+
+<div class="container">
+    <h1>当前执行配置组: {{.group}}</h1>
+    <h1>当前执行脚本: {{.line}}</h1>
+    <h1>地图追踪进度：{{.progress}}</h1>
+    <h1>软件运行状态: {{.running}}</h1>
+    <h1>JS: {{.jsProgress}}</h1>
+
+    <button onclick="oneLongBtn()">一条龙启动</button>
+    <button onclick="closeBgiBtn()">关闭BGI</button>
+    <button onclick="closeYuanShenBtn()">关闭原神(启动器)</button>
+    <button onclick="todayHarvestBtn()">查看收获前10</button>
+    <button onclick="BagStatisticsBtn()">背包统计</button>
+    <button onclick="listGroupsBtn()">调度器</button>
+    <button onclick="realTimeLogBtn()">实时日志</button>
+    <button onclick="getAutoArtifactsProBtn()">查看狗粮日志</button>
+<!--    <button onclick="getAutoUpdateJsAndPathingBtn()">更新脚本和地图追踪</button>-->
+    <button onclick="getBackupBtn()">备份user文件和指定文件</button>
+    <button onclick="otherBtn()">其他</button>
+</div>
+
+<script>
+    function otherBtn() {
+        window.location.href = '/other';
+    }
+
+    function getBackupBtn() {
+        fetch('/backup', { method: 'POST' })
+            .then(res => alert(res.ok ? "备份成功！" : "备份失败！"))
+            .catch(err => alert("请求出错：" + err));
+    }
+
+    function getAutoUpdateJsAndPathingBtn() {
+        fetch('/autoUpdateJsAndPathing', { method: 'POST' })
+            .then(res => alert(res.ok ? "脚本和地图已经更新成功！" : "脚本和地图已经更新失败！"))
+            .catch(err => alert("请求出错：" + err));
+    }
+    function oneLongBtn() {
+        fetch('/oneLong', { method: 'POST' })
+            .then(res => alert(res.ok ? "启动成功！" : "启动失败！"))
+            .catch(err => alert("请求出错：" + err));
+    }
+
+    function closeBgiBtn() {
+        fetch('/closeBgi', { method: 'POST' })
+            .then(res => alert(res.ok ? "关闭成功！" : "关闭失败！"))
+            .catch(err => alert("请求出错：" + err));
+    }
+
+    function closeYuanShenBtn() {
+        fetch('/closeYuanShen', { method: 'POST' })
+            .then(res => alert(res.ok ? "关闭成功！" : "关闭失败！"))
+            .catch(err => alert("请求出错：" + err));
+    }
+
+    function todayHarvestBtn() {
+        window.location.href = '/logAnalysis';
+    }
+
+    function BagStatisticsBtn() {
+        window.location.href = '/BagStatistics';
+    }
+
+    function listGroupsBtn() {
+        window.location.href = '/listGroups';
+    }
+
+    function realTimeLogBtn() {
+        window.location.href = '/log';
+    }
+
+    function getAutoArtifactsProBtn() {
+        window.location.href = '/getAutoArtifactsPro';
+    }
+
+
+</script>
+
+<script>
+    // 樱花飘落特效
+    const canvas = document.getElementById("animeCanvas");
+    const ctx = canvas.getContext("2d");
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    // 樱花类
+    class Petal {
+        constructor() {
+            this.x = Math.random() * canvas.width;
+            this.y = Math.random() * canvas.height * -1 - 100;
+            this.size = Math.random() * 8 + 5;
+            this.speed = Math.random() * 2 + 0.5;
+            this.angle = Math.random() * 360;
+            this.spin = Math.random() * 5 - 2.5;
+            this.color = ["#ffcce6", "#ffd1e0", "#ff9ecd", "#ffaad5"][Math.floor(Math.random() * 4)];
+        }
+
+        update() {
+            this.y += this.speed;
+            this.x += Math.sin(this.angle * Math.PI / 180) * 0.5;
+            this.angle += this.spin;
+
+            if (this.y > canvas.height) {
+                this.y = -this.size * 2;
+                this.x = Math.random() * canvas.width;
+            }
+        }
+
+        draw() {
+            ctx.save();
+            ctx.translate(this.x, this.y);
+            ctx.rotate(this.angle * Math.PI / 180);
+            
+            ctx.fillStyle = this.color;
+            ctx.beginPath();
+            // 绘制樱花花瓣
+            ctx.moveTo(0, 0);
+            ctx.bezierCurveTo(this.size / 2, -this.size / 2, this.size, -this.size / 4, this.size, 0);
+            ctx.bezierCurveTo(this.size, this.size / 4, this.size / 2, this.size / 2, 0, 0);
+            ctx.fill();
+            ctx.restore();
+        }
+    }
+
+    // 创建多个樱花花瓣
+    const petals = Array.from({ length: 50 }, () => new Petal());
+
+    function animate() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        petals.forEach(petal => {
+            petal.update();
+            petal.draw();
+        });
+        
+        requestAnimationFrame(animate);
+    }
+
+    animate();
+
+    // 窗口尺寸变化时自适应
+    window.addEventListener('resize', () => {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    });
+</script>
+
+</body>
+</html>

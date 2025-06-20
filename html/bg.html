@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ .title }}</title>
+    <style>
+        :root {
+            --primary-color: #ff85c2;
+            --background-light: #ffeef5;
+            --text-color: #ff6699;
+            --border-color: #ffbcd9;
+            --row-hover: rgba(255, 188, 217, 0.3);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: "Comic Sans MS", "Segoe UI", sans-serif;
+            background-color: var(--background-light);
+            color: var(--text-color);
+            min-height: 100vh;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 100 100"><path d="M25,50 Q50,25 75,50 Q50,75 25,50 Z" fill="%23ffbcd9" opacity="0.3"/></svg>');
+        }
+
+        header {
+            background-color: rgba(255, 255, 255, 0.8);
+            padding: 30px 0 10px;
+            text-align: center;
+            box-shadow: 0 0 20px var(--primary-color);
+            border-radius: 0 0 30px 30px;
+        }
+
+        h1 {
+            color: var(--primary-color);
+            font-size: 2rem;
+            text-shadow: 0 0 10px var(--primary-color);
+            margin-top: 15px;
+        }
+
+        .btn-container {
+            margin: 10px auto;
+        }
+
+        .btn {
+            background-color: #fff;
+            color: var(--primary-color);
+            border: 2px solid var(--primary-color);
+            border-radius: 50px;
+            padding: 10px 20px;
+            font-size: 1rem;
+            cursor: pointer;
+            box-shadow: 0 0 10px var(--primary-color);
+            transition: all 0.3s ease;
+            margin: 5px;
+            font-weight: bold;
+        }
+
+        .btn:hover {
+            background-color: var(--primary-color);
+            color: #fff;
+            box-shadow: 0 0 20px var(--primary-color);
+            transform: scale(1.05);
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 30px auto;
+            padding: 20px;
+            position: relative;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: separate;
+            border-spacing: 0 8px;
+            background-color: rgba(255, 255, 255, 0.8);
+            box-shadow: 0 0 15px #ffbcd9;
+            border-radius: 20px;
+            overflow: hidden;
+            padding: 15px;
+        }
+
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+            color: var(--text-color);
+        }
+
+        th {
+            background-color: #ffbcd9;
+            color: #fff;
+            font-weight: bold;
+            text-shadow: none;
+            border-radius: 10px;
+        }
+
+        td {
+            background-color: rgba(255, 255, 255, 0.5);
+            border-radius: 10px;
+        }
+
+        tr:hover td {
+            background-color: var(--row-hover);
+        }
+
+        /* 二次元装饰元素 */
+        .container:before {
+            content: "";
+            position: absolute;
+            top: -20px;
+            left: -20px;
+            width: 60px;
+            height: 60px;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M50,5 C55,25 75,30 95,50 C75,70 55,75 50,95 C45,75 25,70 5,50 C25,30 45,25 50,5 Z" fill="%23ffbcd9"/></svg>');
+            background-size: contain;
+            background-repeat: no-repeat;
+            opacity: 0.5;
+        }
+
+        .container:after {
+            content: "";
+            position: absolute;
+            bottom: -20px;
+            right: -20px;
+            width: 60px;
+            height: 60px;
+            background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><path d="M50,5 C55,25 75,30 95,50 C75,70 55,75 50,95 C45,75 25,70 5,50 C25,30 45,25 50,5 Z" fill="%23ffbcd9"/></svg>');
+            background-size: contain;
+            background-repeat: no-repeat;
+            opacity: 0.5;
+            transform: rotate(45deg);
+        }
+
+        @media (max-width: 600px) {
+            h1 {
+                font-size: 1.5rem;
+            }
+            .btn {
+                font-size: 0.9rem;
+                padding: 8px 16px;
+            }
+            th, td {
+                font-size: 0.9rem;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="btn-container">
+        <button class="btn" onclick="window.location.href='/'">返回主页</button>
+        <button class="btn" onclick="deleteBagBtn()">清空统计</button>
+    </div>
+    <h1>{{ .title }}</h1>
+</header>
+
+<div class="container">
+    <table id="materialTable">
+        <thead>
+        <tr>
+            <th>统计日期</th>
+            <th>材料</th>
+            <th>数量</th>
+        </tr>
+        </thead>
+        <tbody>
+        {{ range .items }}
+        <tr>
+            <td>{{ .Data }}</td>
+            <td>{{ .Cl }}</td>
+            <td>{{ .Num }}</td>
+        </tr>
+        {{ end }}
+        </tbody>
+    </table>
+</div>
+
+<script>
+    async function deleteBagBtn() {
+        fetch('/deleteBag', { method: 'POST' })
+            .then(async res => {
+                const data = await res.json();
+                alert(data.message);
+            })
+            .catch(err => {
+                alert("请求出错：" + err);
+            });
+    }
+
+    window.onload = function () {
+        const table = document.getElementById('materialTable');
+        const tbody = table.querySelector('tbody');
+
+        // 先获取所有数据行，转成数组
+        const rows = Array.from(tbody.querySelectorAll('tr'));
+
+        // 提取数据，方便排序
+        const dataRows = rows.map(row => {
+            return {
+                element: row,
+                date: row.cells[0].textContent.trim(),
+                cl: row.cells[1].textContent.trim(),
+                num: parseInt(row.cells[2].textContent.trim())
+            };
+        });
+
+        // 按材料名升序排序
+        dataRows.sort((a, b) => a.cl.localeCompare(b.cl));
+
+        // 清空 tbody
+        tbody.innerHTML = '';
+
+        // // 颜色分配和材料记录
+        // const colorMap = {};
+        // const colorPalette = [
+        //     '#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6',
+        //     '#1abc9c', '#d35400', '#43e20a', '#16a085', '#c0392b'
+        // ];
+        // let colorIndex = 0;
+        let materialMap = {};
+        let lastCl = null;
+
+        // 按排序结果重新插入行，并插入空行区分材料
+        for (let i = 0; i < dataRows.length; i++) {
+            const { element, date, cl, num } = dataRows[i];
+
+            // 如果材料变化，插入空行
+            if (lastCl !== null && cl !== lastCl) {
+                const spacer = document.createElement('tr');
+                spacer.innerHTML = `<td colspan="3" style="height: 12px; background-color: #ffcce6;"></td>`;
+                tbody.appendChild(spacer);
+            }
+            lastCl = cl;
+
+            // // 分配颜色
+            // if (!colorMap[cl]) {
+            //     colorMap[cl] = colorPalette[colorIndex % colorPalette.length];
+            //     colorIndex++;
+            // }
+            // element.style.backgroundColor = colorMap[cl] + '20'; // 半透明
+
+            // 显示数量变化
+            if (materialMap[cl] !== undefined) {
+                const prev = materialMap[cl];
+                const diff = num - prev.num;
+                if (diff !== 0) {
+                    const sign = diff > 0 ? '+' : '';
+                    element.cells[2].textContent = num + ` (${sign}${diff})`;
+                }
+            }
+
+            materialMap[cl] = { date, num };
+
+            tbody.appendChild(element);
+        }
+    };
+</script>
+
+</body>
+</html>
