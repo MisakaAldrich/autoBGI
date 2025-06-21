@@ -330,7 +330,7 @@ func BagStatistics() ([]Material, error) {
 	// 打开文件
 	file, err := os.Open(filename) // 替换为你的文件路径
 	if err != nil {
-		return nil, err
+		autoLog.Sugar.Errorf("背包统计失败: %v", err)
 	}
 	defer file.Close()
 
@@ -923,7 +923,8 @@ type GroupDetail struct {
 }
 
 func GroupTime() ([]GroupMap, error) {
-	today := time.Now().Format("2006-01-02")
+	nowTime := time.Now()
+	today := nowTime.Format("2006-01-02")
 	layoutFull := "2006-01-02 15:04:05"
 
 	date := time.Now().Format("20060102")
@@ -949,8 +950,8 @@ func GroupTime() ([]GroupMap, error) {
 	scanner := bufio.NewScanner(file)
 	var prevLine string
 
-	async := config.GetTravelsDiaryDetailAsync(6, 2, 1)
-	async1 := config.GetTravelsDiaryDetailAsync(6, 2, 2)
+	async := config.GetTravelsDiaryDetailAsync(int(nowTime.Month()), 2, 1)
+	async1 := config.GetTravelsDiaryDetailAsync(int(nowTime.Month()), 2, 2)
 	async.List = append(async.List, async1.List...)
 
 	for scanner.Scan() {
