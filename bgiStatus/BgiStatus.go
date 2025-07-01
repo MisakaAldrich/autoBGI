@@ -510,6 +510,31 @@ func GetGroupP(group string) string {
 	return fmt.Sprintf("%d/%d", gouliangLines, totalLines)
 }
 
+// 读取manifest.json的version号
+func ReadVersion(filePath string) string {
+	// 打开文件
+	Path := filepath.Join(filePath, "manifest.json")
+	file, err := os.Open(Path)
+	if err != nil {
+		fmt.Println("打开文件失败:", err)
+	}
+	defer file.Close()
+	// 文件内容转map
+	var data map[string]interface{}
+	decoder := json.NewDecoder(file)
+	err = decoder.Decode(&data)
+	if err != nil {
+		return "未知版本"
+	}
+	// 获取version
+	version, ok := data["version"].(string)
+	if !ok {
+		return "未知版本"
+	}
+	return version
+
+}
+
 func GetAutoArtifactsPro() ([]DogFood, error) {
 	// 获取当前目录下所有 .txt 文件
 	files, err := filepath.Glob(fmt.Sprintf("%s\\User\\JsScript\\AutoArtifactsPro\\records\\*.txt", Config.BetterGIAddress))
@@ -1145,4 +1170,57 @@ func GetGroupPInfo() string {
 	reader.Read(s1)
 
 	return string(s1)
+}
+
+func AutoJs() string {
+
+	url := "https://github.com/babalae/bettergi-scripts-list/archive/refs/heads/main.zip"
+	zipFile := "main.zip"
+	err := downloadFile(zipFile, url)
+	if err != nil {
+		return "下载失败"
+	}
+	err2 := unzipRepo(zipFile, "repo", "repo/")
+	if err2 != nil {
+		return "解压失败"
+	}
+
+	jsNames := Config.JsName
+	repoDir := "repo/js"
+
+	for _, jsName := range jsNames {
+		subFolderPath, err := findSubFolder(repoDir, jsName)
+		if err != nil {
+			autoLog.Sugar.Errorf("查找子文件夹失败: %v", err)
+			return fmt.Sprintf("未找到子文件夹: %s", jsName)
+		}
+
+		// 找到子文件夹后，执行复制操作
+		targetPath := filepath.Join(Config.BetterGIAddress, "User", "JsScript", jsName)
+		err2 := copy.Copy(subFolderPath, targetPath)
+		if err2 != nil {
+			fmt.Println(err2)
+		}
+		autoLog.Sugar.Infof("Js脚本: %s 已更新", subFolderPath)
+	}
+	os.RemoveAll("repo")
+	os.RemoveAll("main.zip")
+
+	return "备份成功"
+}
+
+// 查找 repo 目录下是否存在名为 targetFolder 的子文件夹
+func findSubFolder(root string, targetFolder string) (string, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", err
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() && entry.Name() == targetFolder {
+			return filepath.Join(root, entry.Name()), nil
+		}
+	}
+
+	return "", fmt.Errorf("未找到子文件夹: %s", targetFolder)
 }

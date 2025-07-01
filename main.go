@@ -479,16 +479,19 @@ func main() {
 		pro, err := bgiStatus.GetAutoArtifactsPro()
 		autoLog.Sugar.Infof("狗粮记录:%s", pro)
 
+		//获取版本号
+		version := bgiStatus.ReadVersion(fmt.Sprintf("%s\\User\\JsScript\\AutoArtifactsPro", Config.BetterGIAddress))
+
 		if err != nil {
 			// 传递给模板
 			context.HTML(http.StatusOK, "AutoArtifactsPro.html", gin.H{
-				"title": "狗粮收益查询",
+				"title": "狗粮收益查询" + "【" + version + "】",
 				"items": nil,
 			})
 			return
 		}
 		context.HTML(http.StatusOK, "AutoArtifactsPro.html", gin.H{
-			"title": "狗粮收益查询",
+			"title": "狗粮收益查询" + "【" + version + "】",
 			"items": pro,
 		})
 
@@ -586,9 +589,11 @@ func main() {
 		})
 	})
 
-	//测试
-	ginServer.GET("/test", func(context *gin.Context) {
-		control.GetMysQDXy()
+	//自动更新Js
+	ginServer.POST("/autoJs", func(context *gin.Context) {
+		js := bgiStatus.AutoJs()
+		autoLog.Sugar.Infof("更新Js:%s", js)
+		context.JSON(http.StatusOK, gin.H{"status": "received", "data": js})
 	})
 
 	//读取statuc文件夹所有的图片
