@@ -226,7 +226,7 @@ func Progress(filename string, line string) (string, error) {
 	// 1. 读取 JSON 文件
 	data, err := os.ReadFile(filename)
 	if err != nil {
-		return "", fmt.Errorf("读取文件失败: %v", err)
+		return "", fmt.Errorf("进度读取文件失败:%s", filename)
 	}
 	// 2. 解析为 map[string]interface{}（保持原始结构）
 	var jsonData map[string]interface{}
@@ -278,14 +278,12 @@ func GetGroupNum(filename string) (int, error) {
 	return int(index.(float64)), nil
 }
 
-func TodayHarvest() (map[string]int, error) {
+func TodayHarvest(fileName string) (map[string]int, error) {
 
 	autoLog.Sugar.Infof("今日收获统计")
 	re := regexp.MustCompile(`^交互或拾取："([^"]*)"`)
 
-	// 生成日志文件名
-	date := time.Now().Format("20060102")
-	filename := filepath.Clean(fmt.Sprintf("%s\\log\\better-genshin-impact%s.log", Config.BetterGIAddress, date))
+	filename := filepath.Clean(fmt.Sprintf("%s\\log\\%s", Config.BetterGIAddress, fileName))
 
 	file, err := os.Open(filename)
 	if err != nil {
@@ -348,7 +346,8 @@ func BagStatistics() ([]Material, error) {
 	for scanner.Scan() {
 		for _, s := range split {
 			// 创建一个正则表达式来匹配 "晶蝶：数字" 模式
-			sprintf := fmt.Sprintf(`,%s: (\d+)`, s)
+			sprintf := fmt.Sprintf(`(?:^|[,\s])%s: (\d+)`, s)
+
 			re := regexp.MustCompile(sprintf)
 
 			line := scanner.Text()
@@ -675,12 +674,12 @@ type KeyValue struct {
 // 创建一个数组
 var Relics = []string{"冒险家", "游医", "幸运儿", "险家", "医的", "运儿", "家",
 	"方巾", "枭羽", "怀钟", "药壶", "银莲", "怀表", "尾羽", "头带", "金杯", "之花", "之杯",
-	"沙漏", "绿花", "银冠", "鹰羽"}
+	"沙漏", "绿花", "银冠", "鹰羽", "冒险", "游医的"}
 
 // analyseLog handles the /api/analyse GET request
-func LogAnalysis() map[string]int {
+func LogAnalysis(fileName string) map[string]int {
 	autoLog.Sugar.Infof("日志分析")
-	res, _ := TodayHarvest()
+	res, _ := TodayHarvest(fileName)
 
 	var datas []KeyValue
 
@@ -1020,8 +1019,11 @@ func GroupTime() ([]GroupMap, error) {
 	today := nowTime.Format("2006-01-02")
 	layoutFull := "2006-01-02 15:04:05"
 
-	date := time.Now().Format("20060102")
-	filename := filepath.Clean(fmt.Sprintf("%s\\log\\better-genshin-impact%s.log", Config.BetterGIAddress, date))
+	filePath := filepath.Clean(fmt.Sprintf("%s\\log", Config.BetterGIAddress)) // 本地日志路径
+	files, err := FindLogFiles(filePath)
+	//获取最后一个文件
+	filename := filepath.Clean(fmt.Sprintf("%s\\log\\%s", Config.BetterGIAddress, files[len(files)-1]))
+
 	file, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -1160,6 +1162,9 @@ func GetGroupPInfo() string {
 	openFile, _ := os.OpenFile(file, os.O_RDWR, os.ModePerm)
 
 	stat, _ := openFile.Stat()
+	if stat == nil {
+		return ""
+	}
 
 	defer openFile.Close()
 
@@ -1167,7 +1172,10 @@ func GetGroupPInfo() string {
 
 	//读取
 	s1 := make([]byte, stat.Size())
-	reader.Read(s1)
+	_, err := reader.Read(s1)
+	if err != nil {
+		return ""
+	}
 
 	return string(s1)
 }
