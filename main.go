@@ -196,13 +196,15 @@ func main() {
 	ginServer.GET("/index", func(c *gin.Context) {
 		// 生成日志文件名
 		date := time.Now().Format("20060102")
+
 		filename := filepath.Clean(fmt.Sprintf("%s\\log\\better-genshin-impact%s.log", Config.BetterGIAddress, date))
 
 		filePath := filepath.Clean(fmt.Sprintf("%s\\log", Config.BetterGIAddress)) // 本地日志路径
 		files, err := bgiStatus.FindLogFiles(filePath)
+		fmt.Println(files)
 		if err == nil {
 			//获取最后一个文件
-			filename = filepath.Clean(fmt.Sprintf("%s\\log\\%s", Config.BetterGIAddress, files[len(files)-1]))
+			filename = filepath.Clean(fmt.Sprintf("%s\\log\\%s", Config.BetterGIAddress, files[0]))
 		}
 
 		autoLog.Sugar.Infof("日志文件名:%s", filename)
@@ -268,45 +270,6 @@ func main() {
 
 		context.JSON(http.StatusOK, gin.H{"status": "received", "data": "原神关闭成功"})
 	})
-
-	//ginServer.GET("/TodayHarvest", func(context *gin.Context) {
-	//
-	//	// 获取统计结果
-	//	stats, err := bgiStatus.TodayHarvest()
-	//	if err != nil {
-	//		context.HTML(http.StatusInternalServerError, "error.html", gin.H{
-	//			"error": err.Error(),
-	//		})
-	//		return
-	//	}
-	//
-	//	// 转换为前端更易处理的格式
-	//	var items []struct {
-	//		Name  string `json:"name"`
-	//		Count int    `json:"count"`
-	//	}
-	//
-	//	for name, count := range stats {
-	//		items = append(items, struct {
-	//			Name  string `json:"name"`
-	//			Count int    `json:"count"`
-	//		}{
-	//			Name:  name,
-	//			Count: count,
-	//		})
-	//	}
-	//
-	//	// 按数量排序
-	//	sort.Slice(items, func(i, j int) bool {
-	//		return items[i].Count > items[j].Count
-	//	})
-	//
-	//	// 传递给模板
-	//	context.HTML(http.StatusOK, "harvest.html", gin.H{
-	//		"title": "今日收获统计",
-	//		"items": items,
-	//	})
-	//})
 
 	//发送截图
 	ginServer.POST("/getImage", func(c *gin.Context) {
@@ -502,7 +465,6 @@ func main() {
 
 	ginServer.GET("/api/logAnalysis", func(context *gin.Context) {
 		fileName := context.Query("file")
-		fmt.Println("==========================", fileName)
 
 		res := bgiStatus.LogAnalysis(fileName)
 
@@ -544,28 +506,38 @@ func main() {
 		})
 	})
 
-	//统计配置组执行时间
 	ginServer.GET("/other", func(context *gin.Context) {
-		GroupTime, _ := bgiStatus.GroupTime()
+		context.HTML(http.StatusOK, "other.html", nil)
+	})
 
-		//获取米游社签到记录
+	// 统计配置组执行时间 - 返回JSON
+	ginServer.GET("/api/other", func(context *gin.Context) {
+
+		fileName := context.Query("file")
+
+		GroupTime, _ := bgiStatus.GroupTime(fileName)
 		signLog := control.GetMysSignLog()
-
-		//获取今日启动配置组
 		groupPInfo := bgiStatus.GetGroupPInfo()
+		gitLog := bgiStatus.GitLog()
 
-		context.HTML(http.StatusOK, "other.html", gin.H{
-			"title":      "其他",
+		context.JSON(http.StatusOK, gin.H{
 			"GroupTime":  GroupTime,
 			"signLog":    signLog,
 			"groupPInfo": groupPInfo,
+			"gitLog":     gitLog,
 		})
 	})
 
 	//自动更新Js
 	ginServer.POST("/autoJs", func(context *gin.Context) {
-		js := bgiStatus.AutoJs()
+		js, err := bgiStatus.AutoJs()
 		autoLog.Sugar.Infof("更新Js:%s", js)
+
+		if err != nil {
+			context.JSON(http.StatusBadRequest, gin.H{"status": "received", "data": err})
+			return
+		}
+
 		context.JSON(http.StatusOK, gin.H{"status": "received", "data": js})
 	})
 
@@ -604,6 +576,15 @@ func main() {
 
 	//检查BGI状态
 	go bgiStatus.CheckBetterGIStatus()
+
+	//更新仓库
+	go func() {
+		err := bgiStatus.GitPull()
+		if err != nil {
+			autoLog.Sugar.Errorf("更新仓库失败:%v", err)
+		}
+	}()
+	go task.UpdateCode()
 
 	if Config.IsMysSignIn {
 		//米游社自动签到

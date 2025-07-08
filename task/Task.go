@@ -260,6 +260,7 @@ func ChangeTaskEnabledList() error {
 }
 
 func OneLongTask() {
+
 	//关闭软件
 	control.CloseSoftware()
 
@@ -279,7 +280,11 @@ func OneLongTask() {
 
 	autoLog.Sugar.Infof("今日启动一条龙: %s", longName)
 
+	////开启录屏视频
+	//go control.StartRecord()
+
 	StartOneDragon(longName)
+
 }
 
 func OneLong() {
@@ -393,13 +398,12 @@ func ListGroups() ([]string, error) {
 
 // 启动配置组
 func StartGroups(name string) {
+
 	control.CloseSoftware()
 	time.Sleep(5 * time.Second)
 
-	//if err := os.Chdir(Config.BetterGIAddress); err != nil {
-	//	autoLog.Sugar.Errorf("切换目录失败 [%s]: %v", Config.BetterGIAddress, err)
-	//	return
-	//}
+	////开启录屏视频
+	//go control.StartRecord()
 
 	betterGIPath := filepath.Join(Config.BetterGIAddress, "BetterGI.exe")
 	cmd := exec.Command(betterGIPath, "--startGroups", name)
@@ -412,11 +416,7 @@ func StartGroups(name string) {
 	}
 
 	autoLog.Sugar.Infof("%s 启动配置组成功", name)
-	//目录切换回来
-	if err := os.Chdir(Config.BasePath); err != nil {
-		autoLog.Sugar.Errorf("切换目录失败 [%s]: %v", Config.BasePath, err)
-		return
-	}
+
 }
 
 // 启动一条龙
@@ -436,109 +436,31 @@ func StartOneDragon(name string) {
 	autoLog.Sugar.Infof("%s 启动一条龙成功", name)
 }
 
-//// 录屏任务
-//func ScreenRecordTask() {
-//	cronTab := cron.New(cron.WithSeconds())
-//	// 定时任务,cron表达式
-//	spec := fmt.Sprintf("0 %d %d * * *", Config.ScreenRecord.ScreenRecordMinute, Config.ScreenRecord.ScreenRecordHour)
-//	// 定义定时器调用的任务函数
-//	task := func() {
-//		ScreenRecord(strconv.Itoa(Config.ScreenRecord.ScreenRecordDuration))
-//	}
-//	// 添加定时任务
-//	cronTab.AddFunc(spec, task)
-//	// 启动定时器
-//	cronTab.Start()
-//	// 阻塞主线程停止
-//	select {}
-//}
-//
-////go:embed ffmpeg.exe
-//var ffmpegData embed.FS
-//
-//// 录屏功能
-//func ScreenRecord(duration string) {
-//	// 释放 ffmpeg.exe 到临时目录
-//	tempDir := os.TempDir()
-//	ffmpegPath := filepath.Join(tempDir, "ffmpeg.exe")
-//
-//	data, err := ffmpegData.ReadFile("ffmpeg.exe")
-//	if err != nil {
-//		autoLog.Sugar.Errorf("读取内置ffmpeg失败: %v", err)
-//		log.Fatalf("读取内置ffmpeg失败: %v", err)
-//	}
-//
-//	err = ioutil.WriteFile(ffmpegPath, data, 0755)
-//	if err != nil {
-//		autoLog.Sugar.Errorf("释放ffmpeg失败: %v", err)
-//		log.Fatalf("释放ffmpeg失败: %v", err)
-//	}
-//
-//	defer os.Remove(ffmpegPath) // 程序结束删除临时文件
-//
-//	// 获取显示器信息
-//	n := screenshot.NumActiveDisplays()
-//	if n == 0 {
-//		autoLog.Sugar.Errorf("没有检测到任何显示器")
-//		log.Fatal("没有检测到任何显示器")
-//	}
-//
-//	minX, minY := screenshot.GetDisplayBounds(0).Min.X, screenshot.GetDisplayBounds(0).Min.Y
-//	maxX, maxY := screenshot.GetDisplayBounds(0).Max.X, screenshot.GetDisplayBounds(0).Max.Y
-//
-//	for i := 1; i < n; i++ {
-//		b := screenshot.GetDisplayBounds(i)
-//		if b.Min.X < minX {
-//			minX = b.Min.X
-//		}
-//		if b.Min.Y < minY {
-//			minY = b.Min.Y
-//		}
-//		if b.Max.X > maxX {
-//			maxX = b.Max.X
-//		}
-//		if b.Max.Y > maxY {
-//			maxY = b.Max.Y
-//		}
-//	}
-//
-//	width := maxX - minX
-//	height := maxY - minY
-//
-//	//时间格式化年月日时分秒
-//	now := time.Now()
-//	year, month, day := now.Date()
-//	hour, minute, second := now.Clock()
-//	formattedTime := fmt.Sprintf("%04d%02d%02d%02d%02d%02d", year, month, day, hour, minute, second)
-//
-//	outputFile := "录屏" + formattedTime + ".mp4"
-//
-//	args := []string{
-//		"-y",
-//		"-f", "gdigrab",
-//		"-framerate", "25",
-//		"-offset_x", strconv.Itoa(minX),
-//		"-offset_y", strconv.Itoa(minY),
-//		"-video_size", fmt.Sprintf("%dx%d", width, height),
-//		"-i", "desktop",
-//		"-c:v", "libx264",
-//		"-pix_fmt", "yuv420p",
-//		"-preset", "veryfast",
-//		"-t", duration,
-//		outputFile,
-//	}
-//
-//	autoLog.Sugar.Infof("开始录屏...")
-//
-//	cmd := exec.Command(ffmpegPath, args...)
-//	cmd.Stdout = os.Stdout
-//	cmd.Stderr = os.Stderr
-//
-//	err = cmd.Run()
-//	if err != nil {
-//		autoLog.Sugar.Errorf("录屏失败: %v", err)
-//		log.Fatalf("录屏失败: %v", err)
-//	}
-//
-//	autoLog.Sugar.Infof("录屏结束，视频已保存为 %s", outputFile)
-//}
+// 定时更新代码
+func UpdateCode() {
+	cronTab := cron.New(cron.WithSeconds())
+
+	// 定时任务,cron表达式
+	//每1个小时执行一次
+	spec := fmt.Sprintf("0 0 */1 * * *")
+	//spec := fmt.Sprintf("0 %d %d * * *", Config.OneLongMinute, Config.OneLongHour)
+
+	// 定义定时器调用的任务函数
+	task := func() {
+		autoLog.Sugar.Infof("仓库更新 %v", time.Now().Format("2006-01-02 15:04:05"))
+
+		err := bgiStatus.GitPull()
+		if err != nil {
+			autoLog.Sugar.Error("更新失败:", err)
+		}
+
+		autoLog.Sugar.Infof("仓库更新启动完毕")
+	}
+
+	// 添加定时任务
+	cronTab.AddFunc(spec, task)
+	// 启动定时器
+	cronTab.Start()
+	// 阻塞主线程停止
+	select {}
+}
