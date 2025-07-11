@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -446,23 +447,29 @@ func main() {
 
 	//查询狗粮日志
 	ginServer.GET("/getAutoArtifactsPro", func(context *gin.Context) {
+
 		pro, err := bgiStatus.GetAutoArtifactsPro()
 		autoLog.Sugar.Infof("狗粮记录:%s", pro)
 
 		//获取版本号
 		version := bgiStatus.ReadVersion(fmt.Sprintf("%s\\User\\JsScript\\AutoArtifactsPro", Config.BetterGIAddress))
 
+		//查询更新状态
+		jsVersion := bgiStatus.JsVersion("AutoArtifactsPro", version)
+
 		if err != nil {
 			// 传递给模板
 			context.HTML(http.StatusOK, "AutoArtifactsPro.html", gin.H{
-				"title": "狗粮收益查询" + "【" + version + "】",
-				"items": nil,
+				"title":     "狗粮收益查询" + "【" + version + "】",
+				"JsVersion": jsVersion,
+				"items":     nil,
 			})
 			return
 		}
 		context.HTML(http.StatusOK, "AutoArtifactsPro.html", gin.H{
-			"title": "狗粮收益查询" + "【" + version + "】",
-			"items": pro,
+			"title":     "狗粮收益查询" + "【" + version + "】",
+			"JsVersion": jsVersion,
+			"items":     pro,
 		})
 
 	})
@@ -552,13 +559,46 @@ func main() {
 
 	// 统计配置组执行时间 - 返回JSON
 	ginServer.GET("/api/other", func(context *gin.Context) {
-
+		var otherGroup sync.WaitGroup
+		otherGroup.Add(4)
 		fileName := context.Query("file")
 
-		GroupTime, _ := bgiStatus.GroupTime(fileName)
-		signLog := control.GetMysSignLog()
-		groupPInfo := bgiStatus.GetGroupPInfo()
-		gitLog := bgiStatus.GitLog()
+		var (
+			GroupTime  []bgiStatus.GroupMap
+			signLog    string
+			groupPInfo string
+			gitLog     []bgiStatus.GitLogStruct
+		)
+
+		//获取配置组执行时长
+		go func() {
+			defer otherGroup.Done()
+			GroupTime, _ = bgiStatus.GroupTime(fileName)
+		}()
+
+		//获取米游社签到日志
+		go func() {
+			defer otherGroup.Done()
+			signLog = control.GetMysSignLog()
+		}()
+
+		//获取今天执行配置组
+		go func() {
+			defer otherGroup.Done()
+			groupPInfo = bgiStatus.GetGroupPInfo()
+		}()
+
+		go func() {
+			defer otherGroup.Done()
+			gitLog = bgiStatus.GitLog()
+		}()
+
+		otherGroup.Wait() // 等待所有 goroutine 完成
+
+		//GroupTime, _ := bgiStatus.GroupTime(fileName)
+		//signLog := control.GetMysSignLog()
+		//groupPInfo := bgiStatus.GetGroupPInfo()
+		//gitLog := bgiStatus.GitLog()
 
 		context.JSON(http.StatusOK, gin.H{
 			"GroupTime":  GroupTime,
