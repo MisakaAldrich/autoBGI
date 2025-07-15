@@ -86,7 +86,6 @@ func SendWeChatNotification(content string) {
 	} else {
 		autoLog.Sugar.Info("企业微信机器人配置成功:", resp.Status)
 	}
-	autoLog.Sugar.Info("BetterGI 已关闭，通知已发送")
 }
 
 // 向企业微信发送通知（图片）
@@ -387,9 +386,46 @@ func BagStatistics() ([]Material, error) {
 			panic(err)
 		}
 	}
+
+	//摩拉统计
 	morasStatistics, _ := MorasStatistics()
 	bags = append(bags, morasStatistics...)
 
+	//原石统计
+	yuanShiStatistics, _ := YuanShiStatistics()
+	bags = append(bags, yuanShiStatistics...)
+
+	return bags, nil
+}
+
+// 原石统计
+func YuanShiStatistics() ([]Material, error) {
+	autoLog.Sugar.Infof("原石统计")
+	filename := filepath.Clean(fmt.Sprintf("%s\\User\\JsScript\\OCR读取当前抽卡资源并发送通知\\Resources_log.txt", Config.BetterGIAddress))
+	file, err := os.Open(filename)
+	if err != nil {
+		autoLog.Sugar.Errorf("没有相关JS")
+	}
+	defer file.Close()
+	var bags []Material
+	// 创建一个扫描器来读取文件
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		var bag Material
+		line := scanner.Text()
+		split := strings.Split(line, " —— ")
+		bag.Data = split[0]
+
+		bag.Cl = "原石"
+
+		yuanShiNum := split[3]
+		//提取数字
+		re := regexp.MustCompile(`\d+`)
+		num := re.FindString(yuanShiNum)
+		bag.Num = num
+
+		bags = append(bags, bag)
+	}
 	return bags, nil
 }
 
@@ -401,6 +437,7 @@ func MorasStatistics() ([]Material, error) {
 	// 打开文件
 	file, err := os.Open(filename)
 	if err != nil {
+		autoLog.Sugar.Infof("没有相关JS")
 		return nil, err
 	}
 	defer file.Close()
@@ -443,6 +480,14 @@ func DeleteBagStatistics() string {
 		autoLog.Sugar.Errorf("删除摩拉统计失败")
 
 	}
+
+	autoLog.Sugar.Infof("删除原石统计")
+	filePath3 := filepath.Clean(fmt.Sprintf("%s\\User\\JsScript\\OCR读取当前抽卡资源并发送通知\\Resources_log.txt", Config.BetterGIAddress))
+	err3 := os.Remove(filePath3)
+	if err3 != nil {
+		autoLog.Sugar.Errorf("删除原石统计失败")
+	}
+
 	autoLog.Sugar.Infof("文件删除成功")
 	return "文件删除成功"
 }
@@ -641,15 +686,15 @@ func GetAutoArtifactsPro2(fileName string) (*EarningsData, error) {
 		// 狗粮
 		DogExpNum := strings.ReplaceAll(parts[2], "狗粮经验", "")
 		number, _ := strconv.Atoi(DogExpNum)
-		if number == -1 {
-			continue
+		if number <= -1 {
+			number = 0
 		}
 
 		// 摩拉
 		MoraNum := strings.ReplaceAll(parts[3], "摩拉", "")
 		number2, _ := strconv.Atoi(MoraNum)
-		if number2 == 0 {
-			continue
+		if number2 <= -1 {
+			number2 = 0
 
 		}
 
@@ -1456,7 +1501,13 @@ func Archive(data map[string]interface{}) string {
 		return "查询数据库失败"
 	}
 	if count > 0 {
-		return "已经归档"
+		//执行修改
+		stmt2, err := config.InitDB().Prepare(`UPDATE archive_records SET execute_time = ? WHERE title = ?`)
+		if err != nil {
+			autoLog.Sugar.Errorf("预处理失败: %v", err)
+			return "预处理失败"
+		}
+		defer stmt2.Close()
 	}
 
 	stmt2, err := config.InitDB().Prepare(`INSERT INTO archive_records(title, execute_time) VALUES (?, ?)`)
@@ -1526,6 +1577,7 @@ func CalculateTime(filename, groupName, startTime string) (string, error) {
 	expectedEnd := start.Add(duration)
 
 	// 返回格式化为 "15:04:05.000"
+	startTime = start.Format("15:04:05")
 	return "【开始时间：" + fileDate + " " + startTime + "】\n" +
 		"【上次时长：" + archiveRecords.ExecuteTime + "】\n" +
 		"【预计结束时间：" + fileDate + " " + expectedEnd.Format("15:04:05") + "】", nil
@@ -1589,24 +1641,52 @@ func JsVersion(jsName, nowVersion string) string {
 
 }
 
+var BgiStatus bool
+
 func ReadLog() {
 	filePath := filepath.Clean(fmt.Sprintf("%s\\log", Config.BetterGIAddress))
 	files, err := FindLogFiles(filePath)
-	if err != nil {
+	if err != nil || len(files) == 0 {
+		fmt.Println("找不到日志文件")
 		return
 	}
 	fileLog := files[0]
-	//实时读取文件
 	file, err := os.Open(filepath.Join(filePath, fileLog))
 	if err != nil {
+		fmt.Println("无法打开日志文件:", err)
 		return
 	}
 	defer file.Close()
+
 	// 定位到文件末尾
 	file.Seek(0, io.SeekEnd)
-	// 实时读取文件内容
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		fmt.Println(scanner.Text())
+
+	i := 0
+	notified := false // 用于标记是否已发送通知
+	reader := bufio.NewReader(file)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				time.Sleep(6 * time.Second) // 没有新内容，稍等再读
+				i++
+				if i >= 10 && !notified {
+					SendWeChatNotification("bgi暂停中")
+					BgiStatus = false
+					notified = true // 标记已通知
+				}
+				continue
+			}
+			fmt.Println("读取文件出错:", err)
+			break
+		}
+
+		// 有新日志时重置状态
+		fmt.Print(line)
+		BgiStatus = true
+		i = 0
+		if notified {
+			notified = false // 日志有更新，重置通知标记
+		}
 	}
 }
