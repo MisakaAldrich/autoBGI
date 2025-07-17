@@ -5,6 +5,7 @@ import (
 	"auto-bgi/autoLog"
 	"auto-bgi/config"
 	"auto-bgi/control"
+	"auto-bgi/tools"
 	"bufio"
 	"bytes"
 	"crypto/md5"
@@ -20,7 +21,6 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 	"os/exec"
@@ -336,7 +336,7 @@ func BagStatistics() ([]Material, error) {
 	filename := filepath.Clean(fmt.Sprintf("%s\\User\\JsScript\\背包材料统计\\latest_record.txt", Config.BetterGIAddress))
 
 	// 打开文件
-	file, err := os.Open(filename) // 替换为你的文件路径
+	file, err := os.Open(filename)
 	if err != nil {
 		autoLog.Sugar.Errorf("背包统计失败: %v", err)
 	}
@@ -404,7 +404,8 @@ func YuanShiStatistics() ([]Material, error) {
 	filename := filepath.Clean(fmt.Sprintf("%s\\User\\JsScript\\OCR读取当前抽卡资源并发送通知\\Resources_log.txt", Config.BetterGIAddress))
 	file, err := os.Open(filename)
 	if err != nil {
-		autoLog.Sugar.Errorf("没有相关JS")
+		autoLog.Sugar.Errorf("没有相关JS:OCR读取当前抽卡资源并发送通知")
+		return nil, err
 	}
 	defer file.Close()
 	var bags []Material
@@ -414,6 +415,9 @@ func YuanShiStatistics() ([]Material, error) {
 		var bag Material
 		line := scanner.Text()
 		split := strings.Split(line, " —— ")
+		if len(split) < 4 {
+			continue
+		}
 		bag.Data = split[0]
 
 		bag.Cl = "原石"
@@ -1267,24 +1271,29 @@ type GitLogStruct struct {
 
 // 查询git日志
 func GitLog() []GitLogStruct {
-	localPath := "./bettergi-scripts-list"
+	localPath := Config.BetterGIAddress + "/Repos/bettergi-scripts-list-git"
 
 	// 打开仓库
 	repo, err := git.PlainOpen(localPath)
 	if err != nil {
-		log.Fatal("打开仓库失败:", err)
+
+		autoLog.Sugar.Errorf("打开仓库失败: %v", err)
+		return nil
 	}
 
 	// 获取 HEAD 引用
 	ref, err := repo.Head()
 	if err != nil {
-		log.Fatal("获取 HEAD 失败:", err)
+		autoLog.Sugar.Errorf("获取 HEAD 失败: %v", err)
+		return nil
+
 	}
 
 	// 获取日志迭代器
 	commitIter, err := repo.Log(&git.LogOptions{From: ref.Hash()})
 	if err != nil {
-		log.Fatal("获取日志失败:", err)
+		autoLog.Sugar.Errorf("获取日志失败: %v", err)
+		return nil
 	}
 
 	var logs []GitLogStruct
@@ -1305,7 +1314,8 @@ func GitLog() []GitLogStruct {
 	})
 
 	if err != nil && err.Error() != "done" {
-		log.Fatal("遍历日志失败:", err)
+		autoLog.Sugar.Errorf("遍历日志失败: %v", err)
+		return nil
 	}
 
 	// 按时间倒序排序
@@ -1318,41 +1328,17 @@ func GitLog() []GitLogStruct {
 	return logs
 }
 
-var repoURLs = []string{
-	//"https://gitcode.com/huiyadanli/bettergi-scripts-list.git",
-	"https://gitee.com/babalae/bettergi-scripts-list.git",
-	////"https://github.com/babalae/bettergi-scripts-list.git",
-	//"https://cnb.cool/bettergi/bettergi-scripts-list.git",
-}
-
 // git拉取代码
 func GitPull() error {
 
-	localPath := "./bettergi-scripts-list"
-	//repoURL := "https://gitcode.com/huiyadanli/bettergi-scripts-list.git"
-	repoURL := ""
-	//随机获取一个地址
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	n := r.Intn(len(repoURLs))
-	//autoLog.Sugar.Infof("随机获取一个地址：%d==%s", n, repoURLs[n])
-	repoURL = repoURLs[n]
+	localPath := Config.BetterGIAddress + "/Repos/bettergi-scripts-list-git"
 
 	// 尝试打开本地仓库
 	repo, err := git.PlainOpen(localPath)
 	if err == git.ErrRepositoryNotExists {
 		// 本地不存在，克隆
-		autoLog.Sugar.Info("本地不存在，开始克隆...")
-		repo, err = git.PlainClone(localPath, false, &git.CloneOptions{
-			URL:           repoURL,
-			ReferenceName: plumbing.NewBranchReferenceName("main"),
-			SingleBranch:  true,
-			Progress:      nil,
-		})
-		if err != nil {
-			autoLog.Sugar.Errorf("克隆失败: %v", err)
-			return fmt.Errorf("克隆失败: %v", err)
-		}
-		autoLog.Sugar.Info("克隆完成")
+		autoLog.Sugar.Info("仓库不存在，请先去bgi重置或者更新仓库")
+
 	} else if err == nil {
 		// 已存在，拉取最新
 		autoLog.Sugar.Info("仓库存在，拉取最新代码...")
@@ -1360,7 +1346,6 @@ func GitPull() error {
 		if err != nil {
 			return fmt.Errorf("获取工作区失败: %v", err)
 		}
-
 		// 强制还原本地更改
 		err = w.Reset(&git.ResetOptions{
 			Mode: git.HardReset,
@@ -1399,7 +1384,7 @@ func AutoJs() (string, error) {
 	}
 
 	jsNames := Config.JsName
-	repoDir := "bettergi-scripts-list/repo/js"
+	repoDir := Config.BetterGIAddress + "/Repos/bettergi-scripts-list-git/repo/js"
 	//
 	for _, jsName := range jsNames {
 		subFolderPath, err := findSubFolder(repoDir, jsName)
@@ -1613,7 +1598,7 @@ func ListArchive() []ArchiveRecords {
 // JsVersion 读取脚本的版本号
 func JsVersion(jsName, nowVersion string) string {
 
-	repoDir := "bettergi-scripts-list/repo/js"
+	repoDir := Config.BetterGIAddress + "/Repos/bettergi-scripts-list-git/repo/js"
 
 	filePath := filepath.Join(repoDir, jsName, "manifest.json")
 	// 读取文件内容
@@ -1689,4 +1674,206 @@ func ReadLog() {
 			notified = false // 日志有更新，重置通知标记
 		}
 	}
+}
+
+var errorKeywords = []string{
+	"未完整匹配到四人队伍",
+	"未检测到任务触发关键词",
+	"OCR 识别失败",
+	"此路线出现3次卡死，重试一次路线或放弃此路线！",
+	"检测到复苏界面，存在角色被击败",
+	"执行路径时出错",
+}
+
+func isErrorLine(line string) (matched string, ok bool) {
+	for _, keyword := range errorKeywords {
+		if strings.Contains(line, keyword) {
+			return keyword, true
+		}
+	}
+	return "", false
+}
+
+type LogAnalysis2Struct struct {
+	GroupName        string
+	StartTime        string
+	EndTime          string
+	Consuming        string
+	LogAnalysis2Json []LogAnalysis2Json
+	ErrorSummary     map[string]int // 🔸每组内的所有错误统计
+}
+
+type LogAnalysis2Json struct {
+	JsonName  string
+	StartTime string
+	EndTime   string
+	Income    map[string]int // ⬅️ 收入项及其数量
+	Errors    map[string]int // 错误项及其数量
+	Consuming string
+}
+
+// 日志分析
+func LogAnalysis2(fileName string) []LogAnalysis2Struct {
+	filePath := filepath.Join(Config.BetterGIAddress, "log")
+	fullPath := filepath.Join(filePath, fileName)
+
+	file, err := os.Open(fullPath)
+	if err != nil {
+		fmt.Println("无法打开日志文件:", err)
+		return []LogAnalysis2Struct{}
+	}
+	defer file.Close()
+
+	reader := bufio.NewReader(file)
+
+	var logAnalysis2Structs []LogAnalysis2Struct
+	var currentStruct *LogAnalysis2Struct
+	var lastLine string
+
+	startRegexp := regexp.MustCompile(`配置组 "(.*?)" 加载完成`)
+	endRegexp := regexp.MustCompile(`配置组 "(.*?)" 执行结束`)
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				fmt.Println("分析完毕")
+				break
+			}
+			fmt.Println("读取文件出错:", err)
+			break
+		}
+
+		timestampLine := lastLine
+		if tools.HasTimestamp(line) {
+			timestampLine = line
+		}
+
+		// 配置组开始
+		if startRegexp.MatchString(line) {
+			matches := startRegexp.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				currentStruct = &LogAnalysis2Struct{
+					GroupName: matches[1],
+				}
+				if t, err := tools.ExtractLogTime(timestampLine); err == nil {
+					currentStruct.StartTime = t
+				} else {
+					fmt.Println("提取开始时间失败:", err)
+				}
+			}
+		}
+
+		// 配置组结束
+		if currentStruct != nil && endRegexp.MatchString(line) {
+			matches := endRegexp.FindStringSubmatch(line)
+			if len(matches) > 1 && matches[1] == currentStruct.GroupName {
+				if t, err := tools.ExtractLogTime(timestampLine); err == nil {
+					currentStruct.EndTime = t
+				} else {
+					fmt.Println("提取结束时间失败:", err)
+				}
+
+				// 计算执行时间（可选）
+				currentStruct.Consuming = tools.CalculateDuration(currentStruct.StartTime, currentStruct.EndTime)
+
+				// 🔸合并错误统计
+				currentStruct.ErrorSummary = make(map[string]int)
+				for _, subTask := range currentStruct.LogAnalysis2Json {
+					for errStr, count := range subTask.Errors {
+						currentStruct.ErrorSummary[errStr] += count
+					}
+				}
+
+				logAnalysis2Structs = append(logAnalysis2Structs, *currentStruct)
+				currentStruct = nil
+			}
+		}
+
+		// 地图追踪任务开始
+		if currentStruct != nil && strings.HasPrefix(line, "→ 开始执行地图追踪任务") {
+			subTask := LogAnalysis2Json{
+				JsonName: line,
+			}
+			if t, err := tools.ExtractLogTime(timestampLine); err == nil {
+				subTask.StartTime = t
+			}
+			currentStruct.LogAnalysis2Json = append(currentStruct.LogAnalysis2Json, subTask)
+		}
+
+		// 地图追踪结束
+		if currentStruct != nil && strings.HasPrefix(line, "→ 脚本执行结束") {
+			n := len(currentStruct.LogAnalysis2Json)
+			if n > 0 {
+				current := &currentStruct.LogAnalysis2Json[n-1]
+				if t, err := tools.ExtractLogTime(timestampLine); err == nil {
+					current.EndTime = t
+					// ✅ 计算任务耗时
+					current.Consuming = tools.CalculateDuration(current.StartTime, current.EndTime)
+				}
+			}
+		}
+
+		//JS脚本开始
+		if currentStruct != nil && strings.HasPrefix(line, "→ 开始执行JS脚本") {
+			subTask := LogAnalysis2Json{
+				JsonName: line,
+			}
+			if t, err := tools.ExtractLogTime(timestampLine); err == nil {
+				subTask.StartTime = t
+			}
+			currentStruct.LogAnalysis2Json = append(currentStruct.LogAnalysis2Json, subTask)
+		}
+
+		// JS脚本任务
+		if currentStruct != nil && strings.HasPrefix(line, "→ 脚本执行结束") {
+			n := len(currentStruct.LogAnalysis2Json)
+			if n > 0 {
+				current := &currentStruct.LogAnalysis2Json[n-1]
+				if t, err := tools.ExtractLogTime(timestampLine); err == nil {
+					current.EndTime = t
+					// ✅ 计算任务耗时
+					current.Consuming = tools.CalculateDuration(current.StartTime, current.EndTime)
+				}
+			}
+		}
+
+		//收入情况
+		pickupRegexp := regexp.MustCompile(`交互或拾取："(.*?)"`)
+
+		if currentStruct != nil && pickupRegexp.MatchString(line) {
+			matches := pickupRegexp.FindStringSubmatch(line)
+			if len(matches) > 1 {
+				item := matches[1]
+				n := len(currentStruct.LogAnalysis2Json)
+				if n > 0 {
+					current := &currentStruct.LogAnalysis2Json[n-1]
+					if current.Income == nil {
+						current.Income = make(map[string]int)
+					}
+					current.Income[item]++
+				}
+			}
+		}
+
+		//错误记录
+		if currentStruct != nil {
+			if matched, ok := isErrorLine(line); ok {
+				n := len(currentStruct.LogAnalysis2Json)
+				if n > 0 {
+					current := &currentStruct.LogAnalysis2Json[n-1]
+					if current.Errors == nil {
+						current.Errors = make(map[string]int)
+					}
+					current.Errors[matched]++
+				}
+			}
+		}
+
+		lastLine = line
+	}
+
+	// 输出结构体内容
+	return logAnalysis2Structs
+
 }
