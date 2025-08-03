@@ -5,6 +5,7 @@ import (
 	"auto-bgi/bgiStatus"
 	"auto-bgi/config"
 	"auto-bgi/control"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"github.com/iancoleman/orderedmap"
@@ -298,6 +299,10 @@ func OneLong() {
 
 	// 定义定时器调用的任务函数
 	task := func() {
+
+		autoLog.Sugar.Infof("开始备份User目录")
+		go BackupUsers()
+
 		autoLog.Sugar.Infof("一条龙服务启动 %v", time.Now().Format("2006-01-02 15:04:05"))
 
 		OneLongTask()
@@ -404,9 +409,6 @@ func StartGroups(name string) {
 	control.CloseSoftware()
 	time.Sleep(5 * time.Second)
 
-	////开启录屏视频
-	//go control.StartRecord()
-
 	betterGIPath := filepath.Join(config.Cfg.BetterGIAddress, "BetterGI.exe")
 	cmd := exec.Command(betterGIPath, "--startGroups", name)
 	cmd.Stdout = os.Stdout
@@ -465,4 +467,90 @@ func UpdateCode() {
 	cronTab.Start()
 	// 阻塞主线程停止
 	select {}
+}
+
+const interval = 72 * time.Hour
+
+// 每周一备份users文件夹
+func BackupUsers() {
+
+	var lastBackupStr string
+	err := config.DB.QueryRow(`SELECT autobgi_value FROM autoBgi_config WHERE autobgi_key = 'BackupUserTime'`).Scan(&lastBackupStr)
+	if err != nil && err != sql.ErrNoRows {
+		autoLog.Sugar.Errorf("查询 BackupUserTime 失败: %v", err)
+		return
+	}
+	// 解析上次时间
+	var lastBackup time.Time
+	if lastBackupStr != "" {
+		parsed, per := time.ParseInLocation("2006-01-02 15:04:05", lastBackupStr, time.Local)
+		if per == nil {
+			lastBackup = parsed
+		} else {
+			autoLog.Sugar.Warnf("时间解析失败(%v)，使用默认时间", per)
+			lastBackup = time.Now().Add(-interval)
+		}
+	}
+
+	now := time.Now()
+
+	if now.Sub(lastBackup) >= interval {
+		autoLog.Sugar.Info("🟢 满足条件，开始备份 users 文件夹...")
+		autoLog.Sugar.Infof("开始备份user文件夹")
+		err4 := bgiStatus.ZipDir(config.Cfg.BetterGIAddress+"\\User\\", "Users\\User"+time.Now().Format("2006100215020405")+".zip", true)
+		if err4 != nil {
+			autoLog.Sugar.Errorf("备份失败: %v")
+			return
+		}
+
+		autoLog.Sugar.Info("备份成功")
+
+		// 更新数据库记录
+		_, err = config.DB.Exec(`UPDATE autoBgi_config SET autobgi_value = ? WHERE autobgi_key = 'BackupUserTime'`, time.Now().Format("2006-01-02 15:04:05"))
+		if err != nil {
+			autoLog.Sugar.Errorf("更新 BackupUserTime 失败: %v", err)
+		} else {
+			autoLog.Sugar.Info("✅ 备份完成，时间已更新")
+		}
+	} else {
+		autoLog.Sugar.Infof("⏳ 未满足条件（上次：%v，下次至少需等待：%.0f小时）", lastBackup, (interval - now.Sub(lastBackup)).Hours())
+	}
+}
+
+// 每隔1个小时发送截图
+func SendWeChatImageTask() {
+
+	cronTab := cron.New(cron.WithSeconds())
+
+	// 定时任务,cron表达式
+	//每1个小时执行一次
+	spec := fmt.Sprintf("0 */59 * * * *")
+
+	// 定义定时器调用的任务函数
+	task := func() {
+
+		autoLog.Sugar.Infof("图片发送 %v", time.Now().Format("2006-01-02 15:04:05"))
+
+		err := control.ScreenShot()
+		if err != nil {
+			autoLog.Sugar.Error("图片发送失败:", err)
+			return
+		}
+
+		err2 := bgiStatus.SendWeChatImage("jt.png")
+		if err2 != nil {
+			autoLog.Sugar.Error("图片发送失败:", err2)
+			return
+		}
+		autoLog.Sugar.Infof("图片发送成功")
+
+	}
+
+	// 添加定时任务
+	cronTab.AddFunc(spec, task)
+	// 启动定时器
+	cronTab.Start()
+	// 阻塞主线程停止
+	select {}
+
 }

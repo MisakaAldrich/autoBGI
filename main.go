@@ -58,7 +58,7 @@ func findLastJSONLine(filename string) (string, error) {
 
 	for scanner.Scan() {
 		line := scanner.Text()
-		if strings.Contains(line, ".json") {
+		if strings.Contains(line, "→ 脚本执行") {
 			lastJSONLine = line
 		}
 	}
@@ -201,11 +201,6 @@ func main() {
 		}
 	})
 
-	//实时读取文件
-	ginServer.GET("/readLog", func(c *gin.Context) {
-		bgiStatus.ReadLog()
-	})
-
 	ginServer.GET("/", func(c *gin.Context) {
 		// 传递给模板
 		c.HTML(http.StatusOK, "index.html", nil)
@@ -297,7 +292,7 @@ func main() {
 			return
 		}
 
-		_, err = config.InitDB().Exec("DELETE FROM archive_records WHERE id = ?", id)
+		_, err = config.DB.Exec("DELETE FROM archive_records WHERE id = ?", id)
 		if err != nil {
 			c.String(http.StatusInternalServerError, "删除失败")
 			return
@@ -573,17 +568,25 @@ func main() {
 		context.HTML(http.StatusOK, "other.html", nil)
 	})
 
+	//获取仓库提交记录（最新的10条）
+	ginServer.GET("/api/gitLog", func(context *gin.Context) {
+		gitLog := bgiStatus.GitLog()
+		context.JSON(http.StatusOK, gin.H{
+			"gitLog": gitLog,
+		})
+	})
+
 	// 统计配置组执行时间 - 返回JSON
 	ginServer.GET("/api/other", func(context *gin.Context) {
 		var otherGroup sync.WaitGroup
-		otherGroup.Add(4)
+		otherGroup.Add(3)
 		fileName := context.Query("file")
 
 		var (
 			GroupTime  []bgiStatus.GroupMap
 			signLog    string
 			groupPInfo string
-			gitLog     []bgiStatus.GitLogStruct
+			//gitLog     []bgiStatus.GitLogStruct
 		)
 
 		//获取配置组执行时长
@@ -604,33 +607,14 @@ func main() {
 			groupPInfo = bgiStatus.GetGroupPInfo()
 		}()
 
-		go func() {
-			defer otherGroup.Done()
-			gitLog = bgiStatus.GitLog()
-		}()
-
 		otherGroup.Wait() // 等待所有 goroutine 完成
 
 		context.JSON(http.StatusOK, gin.H{
 			"GroupTime":  GroupTime,
 			"signLog":    signLog,
 			"groupPInfo": groupPInfo,
-			"gitLog":     gitLog,
 		})
 	})
-
-	////自动更新Js
-	//ginServer.POST("/autoJs", func(context *gin.Context) {
-	//	js, err := bgiStatus.AutoJs()
-	//	autoLog.Sugar.Infof("更新Js:%s", js)
-	//
-	//	if err != nil {
-	//		context.JSON(http.StatusBadRequest, gin.H{"status": "received", "data": err})
-	//		return
-	//	}
-	//
-	//	context.JSON(http.StatusOK, gin.H{"status": "received", "data": js})
-	//})
 
 	//读取statuc文件夹所有的图片
 	ginServer.GET("/images", func(context *gin.Context) {
@@ -751,9 +735,10 @@ func main() {
 		}
 
 		fmt.Println("配置保存成功:", newConfig)
-		//重新加载配置文件
-		//_ = config.ReloadConfig()
 
+		//重新加载配置文件
+		_ = config.ReloadConfig()
+		time.Sleep(1 * time.Second)
 		//c.JSON(http.StatusOK, gin.H{"status": "success", "message": "配置保存成功"})
 
 		// 调用重启脚本
@@ -768,6 +753,139 @@ func main() {
 
 	})
 
+	//读取所有一条龙配置
+	ginServer.GET("/api/oneLongAllName", func(context *gin.Context) {
+		oneLongInfo := config.OneLongAllName()
+		context.JSON(http.StatusOK, gin.H{"status": "success", "data": oneLongInfo})
+	})
+
+	//查询所有天赋书
+	ginServer.GET("/api/talentBooks", func(context *gin.Context) {
+
+		td := &bgiStatus.TalentDomain{}
+		talents, _ := td.QueryAllTalents()
+
+		context.JSON(http.StatusOK, gin.H{"status": "success", "data": talents})
+	})
+
+	ginServer.GET("/api/talentBooks/search", func(c *gin.Context) {
+		name := c.Query("name")
+		if name == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "msg": "缺少参数 name"})
+			return
+		}
+
+		query := `SELECT domain_name, weekday, material_name FROM talent_domains WHERE material_name = ?`
+		rows, err := config.DB.Query(query, name)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "msg": err.Error()})
+			return
+		}
+		defer rows.Close()
+
+		var results []bgiStatus.TalentDomain
+		for rows.Next() {
+			var td bgiStatus.TalentDomain
+			if err := rows.Scan(&td.DomainName, &td.Weekday, &td.MaterialName); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "msg": err.Error()})
+				return
+			}
+			results = append(results, td)
+		}
+
+		if len(results) == 0 {
+			c.JSON(http.StatusOK, gin.H{"status": "not_found"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"data":   results,
+		})
+	})
+
+	ginServer.GET("/onelong", func(context *gin.Context) {
+		context.HTML(http.StatusOK, "onelong.html", nil)
+	})
+
+	// 获取一条龙配置
+	ginServer.GET("/api/onelong/config", func(c *gin.Context) {
+		name := c.Query("name")
+		if name == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "缺少参数 name"})
+			return
+		}
+
+		cfg := config.OneLongConfig(name)
+		c.JSON(http.StatusOK, cfg)
+	})
+
+	//保存一条龙配置
+	ginServer.POST("/api/onelong/saveConfig", func(c *gin.Context) {
+		var newConfig config.OneLongConfigStruct
+
+		if err := c.ShouldBindJSON(&newConfig); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"message": "参数格式错误", "error": err.Error()})
+			return
+		}
+
+		// 保存配置
+		err := config.SaveOneLongConfig(newConfig)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"message": "保存失败", "error": err.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"status": "success", "message": "保存成功"})
+	})
+
+	//武器材料
+
+	//查询所有武器升级材料
+	ginServer.GET("/api/WeaponDomain", func(context *gin.Context) {
+
+		td := &bgiStatus.WeaponDomain{}
+		talents, _ := td.QueryAllWeaponMaterials()
+
+		context.JSON(http.StatusOK, gin.H{"status": "success", "data": talents})
+	})
+
+	ginServer.GET("/api/WeaponDomain/search", func(c *gin.Context) {
+		name := c.Query("name")
+		if name == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "msg": "缺少参数 name"})
+			return
+		}
+
+		query := `SELECT domain_name, weekday, material_name FROM weapon_domains WHERE material_name = ?`
+		rows, err := config.DB.Query(query, name)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "msg": err.Error()})
+			return
+		}
+		defer rows.Close()
+
+		var results []bgiStatus.TalentDomain
+		for rows.Next() {
+			var td bgiStatus.TalentDomain
+			if err := rows.Scan(&td.DomainName, &td.Weekday, &td.MaterialName); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "msg": err.Error()})
+				return
+			}
+			results = append(results, td)
+		}
+
+		if len(results) == 0 {
+			c.JSON(http.StatusOK, gin.H{"status": "not_found"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"status": "success",
+			"data":   results,
+		})
+	})
+
 	//检查BGI状态
 	go bgiStatus.CheckBetterGIStatus()
 	//更新仓库
@@ -777,10 +895,24 @@ func main() {
 			autoLog.Sugar.Errorf("更新仓库失败:%v", err)
 		}
 	}()
+
+	//开启每隔一小时发送截图
+	if config.Cfg.Control.SendWeChatImage {
+		autoLog.Sugar.Infof("开启每隔一小时发送截图")
+		go task.SendWeChatImageTask()
+	} else {
+		autoLog.Sugar.Infof("关闭每隔一小时发送截图")
+	}
+
+	//实时读取文件
+	//go bgiStatus.ReadLog()
+	go bgiStatus.LogM()
+
 	go task.UpdateCode()
 
+	//米游社自动签到
 	if config.Cfg.MySign.IsMySignIn {
-		//米游社自动签到
+
 		go task.MysSignIn()
 		autoLog.Sugar.Infof("米游社自动签到开启状态")
 	} else {
@@ -802,12 +934,15 @@ func main() {
 		post = ":8082"
 	}
 	err := ginServer.Run(post)
-	autoLog.Sugar.Infof("启动成功")
+
 	if err != nil {
+		autoLog.Sugar.Errorf("启动失败:%v", err)
 		return
 	}
-
+	autoLog.Sugar.Infof("启动成功")
 }
 
 //go build
 //go build -embed
+
+//测试

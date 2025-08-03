@@ -659,7 +659,8 @@ func GetAutoArtifactsPro2(fileName string) (*EarningsData, error) {
 		}
 		// 1. 分割字符串，获取日期部分
 		parts := strings.Split(line, "，")
-		if len(parts) < 1 {
+		fmt.Println("======", len(parts))
+		if len(parts) != 4 {
 			autoLog.Sugar.Errorf("字符串格式不正确，无法提取日期。")
 			continue
 		}
@@ -667,6 +668,7 @@ func GetAutoArtifactsPro2(fileName string) (*EarningsData, error) {
 
 		// 路线
 		re := regexp.MustCompile(`[a-zA-Z]`)
+
 		letters := re.FindAllString(parts[1], -1)
 
 		// 狗粮
@@ -814,7 +816,7 @@ func UpdateJsAndPathing() error {
 	autoLog.Sugar.Infof("开始更新脚本和地图仓库")
 	autoLog.Sugar.Infof("开始备份user文件夹")
 
-	err4 := zipDir(config.Cfg.BetterGIAddress+"\\User\\", "Users\\User"+time.Now().Format("20060102")+".zip")
+	err4 := ZipDir(config.Cfg.BetterGIAddress+"\\User\\", "Users\\User"+time.Now().Format("20060102")+".zip", true)
 	if err4 != nil {
 		return fmt.Errorf("备份失败")
 	}
@@ -970,69 +972,64 @@ func downloadFile(filename, url string) error {
 	return err
 }
 
-func zipDir(sourceDir, zipFilePath string) error {
-	fmt.Println(sourceDir)
-	fmt.Println(zipFilePath)
+// zipDir 压缩 sourceDir 到 zipFilePath
+// keepRoot = true 时会在压缩包中保留 sourceDir 的目录名
+func ZipDir(sourceDir, zipFilePath string, keepRoot bool) error {
 
-	// 创建一个新的 zip 文件
+	//清理历史备份
+	_ = ClearDir("Users")
+
+	fmt.Println("压缩目录:", sourceDir)
+	fmt.Println("输出文件:", zipFilePath)
+
 	zipFile, err := os.Create(zipFilePath)
 	if err != nil {
 		return err
 	}
 	defer zipFile.Close()
 
-	// 创建一个新的 zip 写入器
 	zipWriter := zip.NewWriter(zipFile)
 	defer zipWriter.Close()
 
-	// 遍历文件夹中的所有文件和子文件夹
-	err = filepath.Walk(sourceDir, func(path string, info os.FileInfo, err error) error {
+	base := filepath.Clean(sourceDir)
+	parent := filepath.Dir(base)
+
+	err = filepath.Walk(base, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
 
-		// 使用 filepath.Rel 获取相对路径
-		relPath, err := filepath.Rel(sourceDir, path)
-		if err != nil {
-			return err
+		if info.IsDir() {
+			// ✅ 不写入目录条目，让解压自动生成
+			return nil
 		}
 
-		// 获取文件在压缩包中的相对路径
+		// 计算压缩包内路径
+		var relPath string
+		if keepRoot {
+			relPath, _ = filepath.Rel(parent, path) // 保留根目录
+		} else {
+			relPath, _ = filepath.Rel(base, path) // 去掉根目录
+		}
+
 		header, err := zip.FileInfoHeader(info)
 		if err != nil {
 			return err
 		}
-
-		// 如果是目录，则不需要写入内容，只需创建对应的目录条目
-		if info.IsDir() {
-			header.Name = relPath + "/"
-			header.Method = zip.Store
-			if _, err := zipWriter.CreateHeader(header); err != nil {
-				return err
-			}
-			return nil
-		}
-
-		// 文件的相对路径
-		header.Name = relPath
-
-		// 设置压缩方法
+		header.Name = filepath.ToSlash(relPath) // ✅ 统一分隔符
 		header.Method = zip.Deflate
 
-		// 创建新的文件写入器
 		writer, err := zipWriter.CreateHeader(header)
 		if err != nil {
 			return err
 		}
 
-		// 打开文件进行读取
 		file, err := os.Open(path)
 		if err != nil {
 			return err
 		}
 		defer file.Close()
 
-		// 将文件内容复制到压缩包中
 		_, err = io.Copy(writer, file)
 		return err
 	})
@@ -1050,7 +1047,7 @@ func Backup() error {
 		autoLog.Sugar.Infof("已备份文件: %s\n", path)
 	}
 	autoLog.Sugar.Infof("开始备份user文件夹")
-	err4 := zipDir(config.Cfg.BetterGIAddress+"\\User\\", "Users\\User"+time.Now().Format("2006100215020405")+".zip")
+	err4 := ZipDir(config.Cfg.BetterGIAddress+"\\User\\", "Users\\User"+time.Now().Format("2006100215020405")+".zip", true)
 	if err4 != nil {
 		autoLog.Sugar.Errorf("备份失败: %v")
 		return fmt.Errorf("备份失败")
@@ -1250,6 +1247,8 @@ type GitLogStruct struct {
 	Author string
 	//更新内容
 	Message string
+	//提交修改的文件
+	Files []string
 }
 
 // 查询git日志
@@ -1259,7 +1258,6 @@ func GitLog() []GitLogStruct {
 	// 打开仓库
 	repo, err := git.PlainOpen(localPath)
 	if err != nil {
-
 		autoLog.Sugar.Errorf("打开仓库失败: %v", err)
 		return nil
 	}
@@ -1269,7 +1267,6 @@ func GitLog() []GitLogStruct {
 	if err != nil {
 		autoLog.Sugar.Errorf("获取 HEAD 失败: %v", err)
 		return nil
-
 	}
 
 	// 获取日志迭代器
@@ -1280,28 +1277,42 @@ func GitLog() []GitLogStruct {
 	}
 
 	var logs []GitLogStruct
-	// 迭代前 10 条
 	count := 0
-	err = commitIter.ForEach(func(c *object.Commit) error {
 
+	_ = commitIter.ForEach(func(c *object.Commit) error {
 		var gitLogStruct GitLogStruct
 		gitLogStruct.CommitTime = c.Author.When.Format("2006-01-02 15:04:05")
 		gitLogStruct.Author = c.Author.Name
 		gitLogStruct.Message = c.Message
+
+		var fileNames []string
+		if c.NumParents() > 0 {
+			parent, _ := c.Parent(0)
+			patch, _ := parent.Patch(c)
+
+			for _, stat := range patch.Stats() {
+				fileNames = append(fileNames, stat.Name)
+			}
+		} else {
+			// 初始提交，直接列出所有文件
+			tree, _ := c.Tree()
+			_ = tree.Files().ForEach(func(f *object.File) error {
+				fileNames = append(fileNames, f.Name)
+				return nil
+			})
+		}
+
+		gitLogStruct.Files = fileNames
 		logs = append(logs, gitLogStruct)
+
 		count++
 		if count >= 10 {
-			return fmt.Errorf("done") // 手动中断
+			return fmt.Errorf("done")
 		}
 		return nil
 	})
 
-	if err != nil && err.Error() != "done" {
-		autoLog.Sugar.Errorf("遍历日志失败: %v", err)
-		return nil
-	}
-
-	// 按时间倒序排序
+	// 按时间倒序
 	sort.Slice(logs, func(i, j int) bool {
 		ti, _ := time.Parse("2006-01-02 15:04:05", logs[i].CommitTime)
 		tj, _ := time.Parse("2006-01-02 15:04:05", logs[j].CommitTime)
@@ -1367,7 +1378,6 @@ func UpdateJs(jsName string) (string, error) {
 	}
 
 	repoDir := config.Cfg.BetterGIAddress + "/Repos/bettergi-scripts-list-git/repo/js"
-	//
 
 	subFolderPath, err := findSubFolder(repoDir, jsName)
 	if err != nil {
@@ -1397,8 +1407,8 @@ func UpdateJs(jsName string) (string, error) {
 	} else if jsName == "AutoHoeingOneDragon" {
 		autoLog.Sugar.Infof("锄地一条龙脚本特殊处理")
 		autoLog.Sugar.Infof("开始备份日志文件")
-		backupAutoHoeingOneDragon := filepath.Join(targetPath, "assets")
-		copy.Copy(backupAutoHoeingOneDragon, "./backups/AutoHoeingOneDragon/")
+		backupAutoHoeingOneDragon := filepath.Join(targetPath, "assets/拾取名单.json")
+		copy.Copy(backupAutoHoeingOneDragon, "./backups/AutoHoeingOneDragon/拾取名单.json")
 		autoLog.Sugar.Infof("删除原文件")
 		os.RemoveAll(targetPath)
 		autoLog.Sugar.Infof("更新脚本")
@@ -1408,7 +1418,7 @@ func UpdateJs(jsName string) (string, error) {
 			return "更新脚本失败", err2
 		}
 		autoLog.Sugar.Infof("恢复日志文件")
-		err := copy.Copy("./backups/AutoHoeingOneDragon/", filepath.Join(targetPath, "assets"))
+		err := copy.Copy("./backups/AutoHoeingOneDragon/拾取名单.json", filepath.Join(targetPath, "assets/拾取名单.json"))
 		if err != nil {
 			autoLog.Sugar.Errorf("恢复日志文件失败: %v", err)
 			return "恢复日志文件失败", err
@@ -1525,7 +1535,7 @@ func Archive(data map[string]interface{}) string {
 	}
 
 	// 检查是否已经归档
-	stmt, err := config.InitDB().Prepare(`SELECT COUNT(*) FROM archive_records WHERE title =?`)
+	stmt, err := config.DB.Prepare(`SELECT COUNT(*) FROM archive_records WHERE title =?`)
 	if err != nil {
 		fmt.Println("预处理失败:", err)
 		return "预处理失败"
@@ -1537,17 +1547,21 @@ func Archive(data map[string]interface{}) string {
 		fmt.Println("查询数据库失败:", err)
 		return "查询数据库失败"
 	}
+	autoLog.Sugar.Infof("查询数据库是否存在归档记录：%d", count)
 	if count > 0 {
-		//执行修改
-		stmt2, err := config.InitDB().Prepare(`UPDATE archive_records SET execute_time = ? WHERE title = ?`)
+		autoLog.Sugar.Infof("执行修改归档记录")
+		stmt2, err := config.DB.Prepare(`UPDATE archive_records SET execute_time = ? WHERE title = ?`)
 		if err != nil {
 			autoLog.Sugar.Errorf("预处理失败: %v", err)
 			return "预处理失败"
 		}
 		defer stmt2.Close()
+		return "修改归档记录成功"
 	}
 
-	stmt2, err := config.InitDB().Prepare(`INSERT INTO archive_records(title, execute_time) VALUES (?, ?)`)
+	autoLog.Sugar.Infof("执行新增归档记录")
+
+	stmt2, err := config.DB.Prepare(`INSERT INTO archive_records(title, execute_time) VALUES (?, ?)`)
 	if err != nil {
 		fmt.Println("预处理失败:", err)
 		return "预处理失败"
@@ -1556,7 +1570,7 @@ func Archive(data map[string]interface{}) string {
 
 	_, err = stmt2.Exec(title, executeTime)
 	if err != nil {
-		fmt.Println("写入数据库失败:", err)
+		autoLog.Sugar.Errorf("写入数据库失败: %v", err)
 		return "写入数据库失败"
 	}
 
@@ -1578,7 +1592,7 @@ func CalculateTime(filename, groupName, startTime string) (string, error) {
 	fileDate := GetFileNameDate(filename)
 
 	// 查询数据库配置组时长
-	stmt, err := config.InitDB().Prepare(`SELECT execute_time FROM archive_records WHERE title = ?`)
+	stmt, err := config.DB.Prepare(`SELECT execute_time FROM archive_records WHERE title = ?`)
 	if err != nil {
 		return "", err
 	}
@@ -1622,7 +1636,7 @@ func CalculateTime(filename, groupName, startTime string) (string, error) {
 
 // ListArchive 归档查询
 func ListArchive() []ArchiveRecords {
-	stmt, err := config.InitDB().Prepare(`SELECT id, title, execute_time, created_at FROM archive_records`)
+	stmt, err := config.DB.Prepare(`SELECT id, title, execute_time, created_at FROM archive_records`)
 	if err != nil {
 		return nil
 	}
@@ -1678,7 +1692,8 @@ func JsVersion(jsName, nowVersion string) string {
 
 }
 
-var BgiStatus bool
+var aa string
+var i int
 
 func ReadLog() {
 	filePath := filepath.Clean(fmt.Sprintf("%s\\log", config.Cfg.BetterGIAddress))
@@ -1698,43 +1713,37 @@ func ReadLog() {
 	// 定位到文件末尾
 	file.Seek(0, io.SeekEnd)
 
-	i := 0
-	notified := false // 用于标记是否已发送通知
 	reader := bufio.NewReader(file)
 	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				time.Sleep(6 * time.Second) // 没有新内容，稍等再读
+		line, _ := reader.ReadString('\n')
+
+		if aa == line {
+			if i < 30 {
 				i++
-				if i >= 10 && !notified {
-					SendWeChatNotification("bgi暂停中")
-					BgiStatus = false
-					notified = true // 标记已通知
-				}
+				aa = line
+				time.Sleep(1000 * time.Millisecond)
 				continue
+			} else if i == 30 {
+				autoLog.Sugar.Info("bgi" + strconv.Itoa(i) + "秒没有动静")
+				SendWeChatNotification("bgi30秒没有动静")
+				i++
 			}
-			fmt.Println("读取文件出错:", err)
-			break
+		} else {
+			aa = line
+			i = 0
 		}
 
-		// 有新日志时重置状态
-		fmt.Print(line)
-		BgiStatus = true
-		i = 0
-		if notified {
-			notified = false // 日志有更新，重置通知标记
-		}
 	}
 }
 
 var errorKeywords = []string{
 	"未完整匹配到四人队伍",
-	"未检测到任务触发关键词",
+	"未识别到突发任务",
 	"OCR 识别失败",
 	"此路线出现3次卡死，重试一次路线或放弃此路线！",
 	"检测到复苏界面，存在角色被击败",
 	"执行路径时出错",
+	"传送点未激活或不存在",
 }
 
 func isErrorLine(line string) (matched string, ok bool) {
@@ -1968,7 +1977,7 @@ func JsNamesInfo() []JsNamesInfoStruct {
 func GetMysSignLog() string {
 
 	url := config.Cfg.MySign.Url
-	readLogURL := "http://" + url + "/read-log"
+	readLogURL := url + "/read-log"
 	resp, err := http.Get(readLogURL)
 	if err != nil {
 		return ""
@@ -1979,4 +1988,29 @@ func GetMysSignLog() string {
 		return ""
 	}
 	return string(body)
+}
+
+var Keywords = []string{
+	"未识别到突发任务",
+	"OCR 识别失败",
+	"此路线出现3次卡死，重试一次路线或放弃此路线！",
+	"检测到复苏界面，存在角色被击败",
+	"执行路径时出错",
+	"传送点未激活或不存在",
+}
+
+// 监控日志
+func LogM() {
+
+	filePath := filepath.Clean(fmt.Sprintf("%s\\log", config.Cfg.BetterGIAddress))
+	files, err := FindLogFiles(filePath)
+	if err != nil || len(files) == 0 {
+		fmt.Println("找不到日志文件")
+		return
+	}
+	fileLog := files[0]
+
+	monitor := NewLogMonitor(filepath.Join(filePath, fileLog), Keywords, 5)
+	// 启动监控
+	monitor.Monitor()
 }

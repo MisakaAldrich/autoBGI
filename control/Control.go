@@ -2,6 +2,7 @@ package control
 
 import (
 	"auto-bgi/autoLog"
+	"auto-bgi/config"
 	"fmt"
 	"github.com/go-vgo/robotgo"
 	"github.com/pterm/pterm"
@@ -53,8 +54,14 @@ func CloseSoftware() {
 
 }
 
-// 打开软件
+// 关闭软件
 func CloseYuanShen() {
+
+	if !config.Cfg.Control.IsCloseYuanShen {
+		autoLog.Sugar.Infof("不需要关闭原神")
+		return
+	}
+	autoLog.Sugar.Infof("需要关闭原神")
 	// 创建命令
 	cmd := exec.Command("taskkill", "/F", "/IM", "YuanShen.exe")
 
@@ -111,7 +118,7 @@ func ScreenShot() error {
 	img := robotgo.ToImage(imgScreen)
 	imgo.Save("jt.png", img)
 
-	time.Sleep(2000 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	return nil
 }

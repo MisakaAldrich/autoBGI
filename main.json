@@ -8,7 +8,7 @@
     },
     "MySign": {
         "isMysSignIn": false,
-        "url": "http://localhost:8888"
+        "url": "http://localhost:8883"
     },
     "webhookURL": "https://qyapi.weixin.qq.com",
     "content": "",
@@ -29,5 +29,9 @@
         "AutoArtifactsPro"
     ],
     "cookie": "",
-    "basePath": ""
+    "basePath": "",
+    "Control": {
+        "IsCloseYuanShen": true,
+        "SendWeChatImage": false
+    }
 }

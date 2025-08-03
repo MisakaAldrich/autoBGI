@@ -25,6 +25,12 @@ type Config struct {
 	Cookie          string   `json:"cookie"`
 	BasePath        string   `json:"basePath"`
 	JsName          []string `json:"jsName" comment:"需要更新的js名称"`
+	Control         Control  `json:"Control" comment:"控制配置"`
+}
+
+type Control struct {
+	IsCloseYuanShen bool `json:"IsCloseYuanShen" comment:"bgi关闭需要是否关闭原神"`
+	SendWeChatImage bool `json:"SendWeChatImage" comment:"是否开启每隔一小时发送截图"`
 }
 
 type oneLong struct {
