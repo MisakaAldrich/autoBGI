@@ -182,42 +182,46 @@ func CheckBetterGIStatus() {
 	select {}
 }
 
-func JsProgress(filename string, pattern string) (string, error) {
+func JsProgress(filename string, patterns ...string) (string, error) {
+	// 编译所有的正则表达式
+	var regexps []*regexp.Regexp
+	for _, p := range patterns {
+		re, err := regexp.Compile(p)
+		if err != nil {
+			return "", fmt.Errorf("正则表达式编译失败: %v", err)
+		}
+		regexps = append(regexps, re)
+	}
 
-	// 1. 读取 JSON 文件
-
-	re := regexp.MustCompile(pattern)
-
+	// 打开文件
 	file, err := os.Open(filename)
 	if err != nil {
 		return "", err
 	}
 	defer file.Close()
 
-	// 用于存储最后匹配的行和配置组名称
+	// 扫描文件行并尝试匹配所有正则表达式
 	var lastMatch string
-
 	scanner := bufio.NewScanner(file)
-
 	for scanner.Scan() {
 		line := scanner.Text()
-		matches := re.FindStringSubmatch(line)
-		if matches != nil {
-			lastMatch = line
-
+		for _, re := range regexps {
+			if re.MatchString(line) {
+				lastMatch = line
+				break // 当前行已经匹配，继续下一行
+			}
 		}
 	}
+
 	if err := scanner.Err(); err != nil {
 		return "", err
 	}
-	// 输出结果
+
+	// 返回最后一行匹配结果
 	if lastMatch != "" {
-		//autoLog.Sugar.Infof("最后匹配的行: %s", lastMatch)
-	} else {
-		errs := fmt.Errorf("没有找到匹配的行", 500)
-		return "", errs
+		return lastMatch, nil
 	}
-	return lastMatch, nil
+	return "", fmt.Errorf("没有找到匹配的行")
 }
 
 func Progress(filename string, line string) (string, error) {
@@ -480,6 +484,7 @@ func DeleteBagStatistics() string {
 
 type DogFood struct {
 	FileName string
+	Mark     string
 	Detail   []string
 }
 
@@ -578,7 +583,7 @@ func ReadVersion(filePath string) string {
 
 func GetAutoArtifactsPro() ([]DogFood, error) {
 	// 获取当前目录下所有 .txt 文件
-	files, err := filepath.Glob(fmt.Sprintf("%s\\User\\JsScript\\AutoArtifactsPro\\records\\*.txt", config.Cfg.BetterGIAddress))
+	files, err := filepath.Glob(fmt.Sprintf("%s\\User\\JsScript\\AAA-Artifacts-Bulk-Supply\\records\\*.txt", config.Cfg.BetterGIAddress))
 	if err != nil {
 		return nil, err
 	}
@@ -606,7 +611,10 @@ func GetAutoArtifactsPro() ([]DogFood, error) {
 		for scanner.Scan() {
 			line := scanner.Text()
 			if !inHistory {
-				if strings.HasPrefix(line, "历史收益：") {
+				if strings.Contains(line, "上次运行收尾路线") {
+					replace := strings.ReplaceAll(line, "上次运行收尾路线：", "")
+					dogFood.Mark = replace
+
 					inHistory = true
 				}
 				continue
@@ -637,7 +645,7 @@ type EarningsData struct {
 func GetAutoArtifactsPro2(fileName string) (*EarningsData, error) {
 
 	autoLog.Sugar.Infof("狗粮查询")
-	filePath := filepath.Clean(fmt.Sprintf("%s\\User\\JsScript\\AutoArtifactsPro\\records\\%s", config.Cfg.BetterGIAddress, fileName))
+	filePath := filepath.Clean(fmt.Sprintf("%s\\User\\JsScript\\AAA-Artifacts-Bulk-Supply\\records\\%s", config.Cfg.BetterGIAddress, fileName))
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
@@ -652,14 +660,13 @@ func GetAutoArtifactsPro2(fileName string) (*EarningsData, error) {
 
 		line := scanner.Text()
 		if !inHistory {
-			if strings.HasPrefix(line, "历史收益：") {
+			if strings.Contains(line, "上次运行收尾路线") {
 				inHistory = true
 			}
 			continue
 		}
 		// 1. 分割字符串，获取日期部分
 		parts := strings.Split(line, "，")
-		fmt.Println("======", len(parts))
 		if len(parts) != 4 {
 			autoLog.Sugar.Errorf("字符串格式不正确，无法提取日期。")
 			continue
@@ -799,6 +806,47 @@ func FindLogFiles(dirPath string) ([]string, error) {
 	}
 
 	// 按时间倒序排序
+	sort.Slice(fileInfos, func(i, j int) bool {
+		return fileInfos[i].time.After(fileInfos[j].time)
+	})
+
+	// 只返回文件名
+	var filenames []string
+	for _, fi := range fileInfos {
+		filenames = append(filenames, fi.name)
+	}
+
+	return filenames, nil
+}
+
+func FindLogFiles1Remote(dirPath string) ([]string, error) {
+	// 匹配 1Remote.log_20250810.md 这种文件名
+	pattern := filepath.Join(dirPath, "1Remote.log_*.md")
+
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, err
+	}
+
+	// 保存文件名和修改时间
+	type fileInfo struct {
+		name string
+		time time.Time
+	}
+
+	var fileInfos []fileInfo
+	for _, f := range files {
+		info, err := os.Stat(f)
+		if err != nil {
+			continue // 读取失败跳过
+		}
+		fileInfos = append(fileInfos, fileInfo{
+			name: filepath.Base(f), // 只保存文件名
+			time: info.ModTime(),
+		})
+	}
+
+	// 按修改时间倒序排序（最新的在前）
 	sort.Slice(fileInfos, func(i, j int) bool {
 		return fileInfos[i].time.After(fileInfos[j].time)
 	})
@@ -1073,7 +1121,10 @@ type GroupDetail struct {
 }
 
 // 提取文件名字日期
-func GetFileNameDate(fileName string) string {
+func GetFileNameDate(filePath string) string {
+
+	fileName := filepath.Base(filePath)
+
 	//提取文件名字的数字
 	// 正则表达式匹配数字
 	re := regexp.MustCompile(`\d+`)
@@ -1372,141 +1423,84 @@ func GitPull() error {
 
 func UpdateJs(jsName string) (string, error) {
 
-	err := GitPull()
-	if err != nil {
-		return err.Error(), err
-	}
+	repoDir := filepath.Join(config.Cfg.BetterGIAddress, "Repos", "bettergi-scripts-list-git", "repo", "js")
 
-	repoDir := config.Cfg.BetterGIAddress + "/Repos/bettergi-scripts-list-git/repo/js"
-
+	// 仓库中 js 脚本目录
 	subFolderPath, err := findSubFolder(repoDir, jsName)
 	if err != nil {
 		autoLog.Sugar.Errorf("查找子文件夹失败: %v", err)
 		return fmt.Sprintf("未找到子文件夹: %s", jsName), err
 	}
 
-	// 找到子文件夹后，执行复制操作
+	// 本地 js 脚本目录
 	targetPath := filepath.Join(config.Cfg.BetterGIAddress, "User", "JsScript", jsName)
 
-	if jsName == "AutoArtifactsPro" {
-		autoLog.Sugar.Infof("狗粮pro脚本特殊处理")
-		autoLog.Sugar.Infof("开始备份日志文件")
-		copy.Copy(filepath.Join(targetPath, "records"), "./backups/AutoArtifactsPro/")
-		//清理原文件
-		os.RemoveAll(targetPath)
-		autoLog.Sugar.Infof("更新脚本")
-		err2 := copy.Copy(subFolderPath, targetPath)
-		if err2 != nil {
-			autoLog.Sugar.Errorf("更新脚本失败: %v", err2)
-		}
-		autoLog.Sugar.Infof("恢复日志文件")
-		err := copy.Copy("./backups/AutoArtifactsPro/", filepath.Join(targetPath, "records"))
+	// manifest 中指定的待备份文件或目录
+	manifest, err := config.ReadManifest(subFolderPath)
+	if err != nil {
+		return err.Error(), err
+	}
+	files := manifest.SavedFiles
+
+	// 备份路径
+	backupRoot := filepath.Join("backups", jsName)
+
+	// 开始备份
+	for _, pattern := range files {
+		fullPattern := filepath.Join(targetPath, pattern)
+		matches, err := filepath.Glob(fullPattern)
 		if err != nil {
-			autoLog.Sugar.Errorf("恢复日志文件失败: %v", err)
-		}
-	} else if jsName == "AutoHoeingOneDragon" {
-		autoLog.Sugar.Infof("锄地一条龙脚本特殊处理")
-		autoLog.Sugar.Infof("开始备份日志文件")
-		backupAutoHoeingOneDragon := filepath.Join(targetPath, "assets/拾取名单.json")
-		copy.Copy(backupAutoHoeingOneDragon, "./backups/AutoHoeingOneDragon/拾取名单.json")
-		autoLog.Sugar.Infof("删除原文件")
-		os.RemoveAll(targetPath)
-		autoLog.Sugar.Infof("更新脚本")
-		err2 := copy.Copy(subFolderPath, targetPath)
-		if err2 != nil {
-			autoLog.Sugar.Errorf("更新脚本失败: %v", err2)
-			return "更新脚本失败", err2
-		}
-		autoLog.Sugar.Infof("恢复日志文件")
-		err := copy.Copy("./backups/AutoHoeingOneDragon/拾取名单.json", filepath.Join(targetPath, "assets/拾取名单.json"))
-		if err != nil {
-			autoLog.Sugar.Errorf("恢复日志文件失败: %v", err)
-			return "恢复日志文件失败", err
+			autoLog.Sugar.Warnf("路径匹配失败: %s, 错误: %v", fullPattern, err)
+			continue
 		}
 
-	} else {
-		//清理原文件
-		os.RemoveAll(targetPath)
-		err2 := copy.Copy(subFolderPath, targetPath)
-		if err2 != nil {
-			return err2.Error(), err2
+		for _, match := range matches {
+			relPath, _ := filepath.Rel(targetPath, match)
+			dstPath := filepath.Join(backupRoot, relPath)
+
+			err := copy.Copy(match, dstPath)
+			if err != nil {
+				autoLog.Sugar.Warnf("备份失败: %s -> %s, 错误: %v", match, dstPath, err)
+			} else {
+				autoLog.Sugar.Infof("备份成功: %s -> %s", match, dstPath)
+			}
 		}
 	}
 
-	autoLog.Sugar.Infof("Js脚本: %s 已更新", subFolderPath)
+	// 删除原 js 脚本目录
+	os.RemoveAll(targetPath)
 
-	return "备份成功", nil
-}
-
-func AutoJs() (string, error) {
-
-	err := GitPull()
+	// 拷贝更新的 js 脚本目录
+	err = copy.Copy(subFolderPath, targetPath)
 	if err != nil {
 		return err.Error(), err
 	}
 
-	jsNames := config.Cfg.JsName
-	repoDir := config.Cfg.BetterGIAddress + "/Repos/bettergi-scripts-list-git/repo/js"
-	//
-	for _, jsName := range jsNames {
-		subFolderPath, err := findSubFolder(repoDir, jsName)
+	// 4. 还原备份内容到新脚本目录
+	for _, pattern := range files {
+		backupPattern := filepath.Join(backupRoot, pattern)
+		matches, err := filepath.Glob(backupPattern)
 		if err != nil {
-			autoLog.Sugar.Errorf("查找子文件夹失败: %v", err)
-			return fmt.Sprintf("未找到子文件夹: %s", jsName), err
+			autoLog.Sugar.Warnf("还原匹配失败: %s, 错误: %v", backupPattern, err)
+			continue
 		}
 
-		// 找到子文件夹后，执行复制操作
-		targetPath := filepath.Join(config.Cfg.BetterGIAddress, "User", "JsScript", jsName)
+		for _, backupItem := range matches {
+			relPath, _ := filepath.Rel(backupRoot, backupItem)
+			restorePath := filepath.Join(targetPath, relPath)
 
-		if jsName == "AutoArtifactsPro" {
-			autoLog.Sugar.Infof("狗粮pro脚本特殊处理")
-			autoLog.Sugar.Infof("开始备份日志文件")
-			copy.Copy(filepath.Join(targetPath, "records"), "./backups/AutoArtifactsPro/")
-			//清理原文件
-			os.RemoveAll(targetPath)
-			autoLog.Sugar.Infof("更新脚本")
-			err2 := copy.Copy(subFolderPath, targetPath)
-			if err2 != nil {
-				autoLog.Sugar.Errorf("更新脚本失败: %v", err2)
-			}
-			autoLog.Sugar.Infof("恢复日志文件")
-			err := copy.Copy("./backups/AutoArtifactsPro/", filepath.Join(targetPath, "records"))
-			if err != nil {
-				autoLog.Sugar.Errorf("恢复日志文件失败: %v", err)
-			}
-		} else if jsName == "AutoHoeingOneDragon" {
-			autoLog.Sugar.Infof("锄地一条龙脚本特殊处理")
-			autoLog.Sugar.Infof("开始备份日志文件")
-			backupAutoHoeingOneDragon := filepath.Join(targetPath, "assets")
-			copy.Copy(backupAutoHoeingOneDragon, "./backups/AutoHoeingOneDragon/")
-			autoLog.Sugar.Infof("删除原文件")
-			os.RemoveAll(targetPath)
-			autoLog.Sugar.Infof("更新脚本")
-			err2 := copy.Copy(subFolderPath, targetPath)
-			if err2 != nil {
-				autoLog.Sugar.Errorf("更新脚本失败: %v", err2)
-				return "更新脚本失败", err2
-			}
-			autoLog.Sugar.Infof("恢复日志文件")
-			err := copy.Copy("./backups/AutoHoeingOneDragon/", filepath.Join(targetPath, "assets"))
-			if err != nil {
-				autoLog.Sugar.Errorf("恢复日志文件失败: %v", err)
-				return "恢复日志文件失败", err
-			}
+			_ = os.MkdirAll(filepath.Dir(restorePath), os.ModePerm)
 
-		} else {
-			//清理原文件
-			os.RemoveAll(targetPath)
-			err2 := copy.Copy(subFolderPath, targetPath)
-			if err2 != nil {
-				return err2.Error(), err2
+			if err := copy.Copy(backupItem, restorePath); err != nil {
+				autoLog.Sugar.Warnf("还原失败: %s -> %s, 错误: %v", backupItem, restorePath, err)
+			} else {
+				autoLog.Sugar.Infof("还原成功: %s -> %s", backupItem, restorePath)
 			}
 		}
-
-		autoLog.Sugar.Infof("Js脚本: %s 已更新", subFolderPath)
 	}
 
-	return "备份成功", nil
+	autoLog.Sugar.Infof("Js脚本: %s 已更新并还原备份内容", jsName)
+	return "更新并还原成功", nil
 }
 
 // 查找 repo 目录下是否存在名为 targetFolder 的子文件夹
@@ -1535,48 +1529,60 @@ func Archive(data map[string]interface{}) string {
 	}
 
 	// 检查是否已经归档
-	stmt, err := config.DB.Prepare(`SELECT COUNT(*) FROM archive_records WHERE title =?`)
+	stmt, err := config.DB.Prepare(`SELECT COUNT(*) FROM archive_records WHERE title = ?`)
 	if err != nil {
 		fmt.Println("预处理失败:", err)
 		return "预处理失败"
 	}
 	defer stmt.Close()
+
 	var count int
 	err = stmt.QueryRow(title).Scan(&count)
 	if err != nil {
 		fmt.Println("查询数据库失败:", err)
 		return "查询数据库失败"
 	}
+
 	autoLog.Sugar.Infof("查询数据库是否存在归档记录：%d", count)
+
 	if count > 0 {
-		autoLog.Sugar.Infof("执行修改归档记录")
-		stmt2, err := config.DB.Prepare(`UPDATE archive_records SET execute_time = ? WHERE title = ?`)
+		autoLog.Sugar.Infof("存在归档记录，执行删除操作")
+
+		// 删除已存在的归档记录
+		delStmt, err := config.DB.Prepare(`DELETE FROM archive_records WHERE title = ?`)
 		if err != nil {
-			autoLog.Sugar.Errorf("预处理失败: %v", err)
-			return "预处理失败"
+			autoLog.Sugar.Errorf("删除预处理失败: %v", err)
+			return "删除预处理失败"
 		}
-		defer stmt2.Close()
-		return "修改归档记录成功"
+		defer delStmt.Close()
+
+		_, err = delStmt.Exec(title)
+		if err != nil {
+			autoLog.Sugar.Errorf("删除数据库记录失败: %v", err)
+			return "删除数据库记录失败"
+		}
+
+		autoLog.Sugar.Infof("删除归档记录成功")
 	}
 
 	autoLog.Sugar.Infof("执行新增归档记录")
 
-	stmt2, err := config.DB.Prepare(`INSERT INTO archive_records(title, execute_time) VALUES (?, ?)`)
+	// 插入新归档记录
+	insertStmt, err := config.DB.Prepare(`INSERT INTO archive_records(title, execute_time) VALUES (?, ?)`)
 	if err != nil {
 		fmt.Println("预处理失败:", err)
 		return "预处理失败"
 	}
-	defer stmt2.Close()
+	defer insertStmt.Close()
 
-	_, err = stmt2.Exec(title, executeTime)
+	_, err = insertStmt.Exec(title, executeTime)
 	if err != nil {
 		autoLog.Sugar.Errorf("写入数据库失败: %v", err)
 		return "写入数据库失败"
 	}
 
-	autoLog.Sugar.Infof("成功归档：%s (%s)\n", title, executeTime)
+	autoLog.Sugar.Infof("成功归档：%s (%s)", title, executeTime)
 	return "归档成功"
-
 }
 
 type ArchiveRecords struct {
@@ -1638,17 +1644,18 @@ func CalculateTime(filename, groupName, startTime string) (string, error) {
 func ListArchive() []ArchiveRecords {
 	stmt, err := config.DB.Prepare(`SELECT id, title, execute_time, created_at FROM archive_records`)
 	if err != nil {
-		return nil
+		return []ArchiveRecords{}
 	}
 	defer stmt.Close()
 
 	rows, err := stmt.Query()
 	if err != nil {
-		return nil
+		return []ArchiveRecords{}
 	}
 	defer rows.Close()
 
-	var archiveRecords []ArchiveRecords
+	//var archiveRecords []ArchiveRecords
+	archiveRecords := make([]ArchiveRecords, 0)
 	for rows.Next() {
 		var record ArchiveRecords
 		err = rows.Scan(&record.Id, &record.Title, &record.ExecuteTime, &record.CreatedAt)
@@ -1744,6 +1751,8 @@ var errorKeywords = []string{
 	"检测到复苏界面，存在角色被击败",
 	"执行路径时出错",
 	"传送点未激活或不存在",
+	"疑似卡死，尝试脱离...",
+	"此追踪脚本未正常走完！",
 }
 
 func isErrorLine(line string) (matched string, ok bool) {
@@ -1762,21 +1771,25 @@ type LogAnalysis2Struct struct {
 	Consuming        string
 	LogAnalysis2Json []LogAnalysis2Json
 	ErrorSummary     map[string]int // 🔸每组内的所有错误统计
+	SumIncome        map[string]int // 🔸每组内的所有收入统计
 }
 
 type LogAnalysis2Json struct {
-	JsonName  string
-	StartTime string
-	EndTime   string
-	Income    map[string]int // ⬅️ 收入项及其数量
-	Errors    map[string]int // 错误项及其数量
-	Consuming string
+	JsonName   string
+	StartTime  string
+	EndTime    string
+	Income     map[string]int // ⬅️ 收入项及其数量
+	Errors     map[string]int // 错误项及其数量
+	ErrorsMark map[string]int
+	Consuming  string
 }
 
 // 日志分析
 func LogAnalysis2(fileName string) []LogAnalysis2Struct {
 	filePath := filepath.Join(config.Cfg.BetterGIAddress, "log")
 	fullPath := filepath.Join(filePath, fileName)
+	//从文件名字从提取日期
+	date := GetFileNameDate(fileName)
 
 	file, err := os.Open(fullPath)
 	if err != nil {
@@ -1790,6 +1803,7 @@ func LogAnalysis2(fileName string) []LogAnalysis2Struct {
 	var logAnalysis2Structs []LogAnalysis2Struct
 	var currentStruct *LogAnalysis2Struct
 	var lastLine string
+	var xy string
 
 	startRegexp := regexp.MustCompile(`配置组 "(.*?)" 加载完成`)
 	endRegexp := regexp.MustCompile(`配置组 "(.*?)" 执行结束`)
@@ -1817,7 +1831,7 @@ func LogAnalysis2(fileName string) []LogAnalysis2Struct {
 				currentStruct = &LogAnalysis2Struct{
 					GroupName: matches[1],
 				}
-				if t, err := tools.ExtractLogTime(timestampLine); err == nil {
+				if t, err := tools.ExtractLogTime2(date, timestampLine); err == nil {
 					currentStruct.StartTime = t
 				} else {
 					fmt.Println("提取开始时间失败:", err)
@@ -1829,7 +1843,7 @@ func LogAnalysis2(fileName string) []LogAnalysis2Struct {
 		if currentStruct != nil && endRegexp.MatchString(line) {
 			matches := endRegexp.FindStringSubmatch(line)
 			if len(matches) > 1 && matches[1] == currentStruct.GroupName {
-				if t, err := tools.ExtractLogTime(timestampLine); err == nil {
+				if t, err := tools.ExtractLogTime2(date, timestampLine); err == nil {
 					currentStruct.EndTime = t
 				} else {
 					fmt.Println("提取结束时间失败:", err)
@@ -1856,7 +1870,7 @@ func LogAnalysis2(fileName string) []LogAnalysis2Struct {
 			subTask := LogAnalysis2Json{
 				JsonName: line,
 			}
-			if t, err := tools.ExtractLogTime(timestampLine); err == nil {
+			if t, err := tools.ExtractLogTime2(date, timestampLine); err == nil {
 				subTask.StartTime = t
 			}
 			currentStruct.LogAnalysis2Json = append(currentStruct.LogAnalysis2Json, subTask)
@@ -1867,7 +1881,7 @@ func LogAnalysis2(fileName string) []LogAnalysis2Struct {
 			n := len(currentStruct.LogAnalysis2Json)
 			if n > 0 {
 				current := &currentStruct.LogAnalysis2Json[n-1]
-				if t, err := tools.ExtractLogTime(timestampLine); err == nil {
+				if t, err := tools.ExtractLogTime2(date, timestampLine); err == nil {
 					current.EndTime = t
 					// ✅ 计算任务耗时
 					current.Consuming = tools.CalculateDuration(current.StartTime, current.EndTime)
@@ -1880,7 +1894,7 @@ func LogAnalysis2(fileName string) []LogAnalysis2Struct {
 			subTask := LogAnalysis2Json{
 				JsonName: line,
 			}
-			if t, err := tools.ExtractLogTime(timestampLine); err == nil {
+			if t, err := tools.ExtractLogTime2(date, timestampLine); err == nil {
 				subTask.StartTime = t
 			}
 			currentStruct.LogAnalysis2Json = append(currentStruct.LogAnalysis2Json, subTask)
@@ -1891,7 +1905,7 @@ func LogAnalysis2(fileName string) []LogAnalysis2Struct {
 			n := len(currentStruct.LogAnalysis2Json)
 			if n > 0 {
 				current := &currentStruct.LogAnalysis2Json[n-1]
-				if t, err := tools.ExtractLogTime(timestampLine); err == nil {
+				if t, err := tools.ExtractLogTime2(date, timestampLine); err == nil {
 					current.EndTime = t
 					// ✅ 计算任务耗时
 					current.Consuming = tools.CalculateDuration(current.StartTime, current.EndTime)
@@ -1912,7 +1926,12 @@ func LogAnalysis2(fileName string) []LogAnalysis2Struct {
 					if current.Income == nil {
 						current.Income = make(map[string]int)
 					}
+					// 初始化收入统计
+					if currentStruct.SumIncome == nil {
+						currentStruct.SumIncome = make(map[string]int)
+					}
 					current.Income[item]++
+					currentStruct.SumIncome[item]++
 				}
 			}
 		}
@@ -1926,9 +1945,18 @@ func LogAnalysis2(fileName string) []LogAnalysis2Struct {
 					if current.Errors == nil {
 						current.Errors = make(map[string]int)
 					}
+					if current.ErrorsMark == nil {
+						current.ErrorsMark = make(map[string]int)
+					}
 					current.Errors[matched]++
+					current.ErrorsMark[xy]++
 				}
 			}
+		}
+
+		//坐标记录
+		if strings.Contains(line, "粗略接近途经点，位置") {
+			xy = line
 		}
 
 		lastLine = line
@@ -1948,30 +1976,47 @@ type JsNamesInfoStruct struct {
 }
 
 func JsNamesInfo() []JsNamesInfoStruct {
-	err := GitPull()
-	if err != nil {
+
+	if err := GitPull(); err != nil {
 		fmt.Println("GitPull失败:", err)
-		return []JsNamesInfoStruct{}
 	}
 
-	jsNames := config.Cfg.JsName
-	var jsNamesInfoStructs []JsNamesInfoStruct
-	for _, name := range jsNames {
-		var jsNamesInfoStruct JsNamesInfoStruct
-		jsNamesInfoStruct.Name = name
-		//获取现在的版本
-		jsNamesInfoStruct.NowVersion = GetJsNowVersion(name)
-		//获取新的版本
-		jsNamesInfoStruct.NewVersion, jsNamesInfoStruct.ChineseName = GetJsNewVersion(name)
-		if jsNamesInfoStruct.NowVersion == jsNamesInfoStruct.NewVersion {
-			jsNamesInfoStruct.Mark = "无更新"
-		} else {
-			jsNamesInfoStruct.Mark = "有更新"
+	// 获取本地所有订阅脚本目录
+	scriptDir := filepath.Join(config.Cfg.BetterGIAddress, "User", "JsScript")
+	subDirs, err := tools.ListSubDirsOnly(scriptDir)
+	if err != nil {
+		autoLog.Sugar.Errorf("获取本地脚本失败: %v", err)
+		return nil
+	}
+
+	jsNamesInfoStructs := make([]JsNamesInfoStruct, 0, len(subDirs))
+
+	for _, name := range subDirs {
+		nowVersion := getJsNowVersion(scriptDir, name)
+		newVersion, chineseName, err := GetJsNewVersion(name)
+		if err != nil {
+			continue
 		}
-		jsNamesInfoStructs = append(jsNamesInfoStructs, jsNamesInfoStruct)
+
+		mark := "无更新"
+		if nowVersion != newVersion {
+			mark = "有更新"
+		}
+
+		jsNamesInfoStructs = append(jsNamesInfoStructs, JsNamesInfoStruct{
+			Name:        name,
+			NowVersion:  nowVersion,
+			NewVersion:  newVersion,
+			ChineseName: chineseName,
+			Mark:        mark,
+		})
 	}
 
 	return jsNamesInfoStructs
+}
+
+func getJsNowVersion(basePath, jsName string) string {
+	return readVersion(filepath.Join(basePath, jsName, "manifest.json"))
 }
 
 func GetMysSignLog() string {
@@ -1990,27 +2035,120 @@ func GetMysSignLog() string {
 	return string(body)
 }
 
-var Keywords = []string{
-	"未识别到突发任务",
-	"OCR 识别失败",
-	"此路线出现3次卡死，重试一次路线或放弃此路线！",
-	"检测到复苏界面，存在角色被击败",
-	"执行路径时出错",
-	"传送点未激活或不存在",
+func readVersion(manifestPath string) string {
+	file, err := os.Open(manifestPath)
+	if err != nil {
+		autoLog.Sugar.Warnf("打开文件失败: %v", err)
+		return "未知版本"
+	}
+	defer file.Close()
+
+	var data map[string]interface{}
+	if err := json.NewDecoder(file).Decode(&data); err != nil {
+		autoLog.Sugar.Warnf("解析JSON失败: %d%v", manifestPath, err)
+		return "未知版本"
+	}
+
+	if version, ok := data["version"].(string); ok {
+		return version
+	}
+	return "未知版本"
 }
 
-// 监控日志
+// 监控日志（支持每天变化的日志文件）
 func LogM() {
+	logDir := filepath.Clean(fmt.Sprintf("%s\\log", config.Cfg.BetterGIAddress))
 
-	filePath := filepath.Clean(fmt.Sprintf("%s\\log", config.Cfg.BetterGIAddress))
-	files, err := FindLogFiles(filePath)
-	if err != nil || len(files) == 0 {
-		fmt.Println("找不到日志文件")
-		return
+	var currentLogFile string
+	var monitor *LogMonitor
+
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		files, err := FindLogFiles(logDir)
+		if err != nil || len(files) == 0 {
+			fmt.Println("找不到日志文件")
+			<-ticker.C
+			continue
+		}
+
+		newLogFile := filepath.Join(logDir, files[0])
+
+		if newLogFile != currentLogFile {
+			fmt.Printf("检测到新日志文件: %s\n", newLogFile)
+			currentLogFile = newLogFile
+
+			if monitor != nil {
+				monitor.Stop()
+			}
+
+			monitor = NewLogMonitor(newLogFile, config.Cfg.LogKeywords, 5)
+			go monitor.Monitor()
+		}
+
+		<-ticker.C
 	}
-	fileLog := files[0]
+}
 
-	monitor := NewLogMonitor(filepath.Join(filePath, fileLog), Keywords, 5)
-	// 启动监控
-	monitor.Monitor()
+func Log1Remote() {
+
+	var currentLogFile string
+	var monitor *LogMonitor
+
+	// 关键字
+	keywords := []string{
+		"OnRdpClientDisconnected",
+	}
+
+	// 每 30 分钟检查一次最新日志文件
+	ticker := time.NewTicker(30 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		files, err := FindLogFiles1Remote(config.Cfg.OneRemote.LogFilePath)
+		if err != nil || len(files) == 0 {
+			fmt.Println("找不到 1Remote 日志文件")
+			<-ticker.C
+			continue
+		}
+
+		newLogFile := filepath.Join(config.Cfg.OneRemote.LogFilePath, files[0]) // 最新文件
+
+		if newLogFile != currentLogFile {
+			fmt.Printf("检测到新的 1Remote 日志文件: %s\n", newLogFile)
+			currentLogFile = newLogFile
+
+			if monitor != nil {
+				monitor.Stop()
+			}
+
+			monitor = NewLogMonitor(newLogFile, keywords, 5)
+			go monitor.Monitor()
+		}
+
+		<-ticker.C
+	}
+}
+
+// 将今日所有配置组归档
+func ArchiveConfig() {
+	// 生成日志文件名
+	date := time.Now().Format("20060102")
+	filename := fmt.Sprintf("better-genshin-impact%s.log", date)
+	//获取今日所有配置组
+	groupTime, _ := GroupTime(filename)
+	for _, groupMap := range groupTime {
+
+		configMap := map[string]interface{}{
+			"Title":       groupMap.Title,
+			"ExecuteTime": groupMap.Detail.ExecuteTime,
+		}
+
+		Archive(configMap)
+
+		autoLog.Sugar.Infof("归档配置组 %s", groupMap.Title)
+
+	}
+
 }

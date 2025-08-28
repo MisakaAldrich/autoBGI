@@ -5,18 +5,18 @@ import (
 	"auto-bgi/bgiStatus"
 	"auto-bgi/config"
 	"auto-bgi/control"
+	"auto-bgi/internal/mysConfig"
 	"auto-bgi/task"
+	"auto-bgi/tools"
 	"bufio"
 	"embed"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/thinkerou/favicon"
-	"html/template"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -29,54 +29,22 @@ import (
 	"time"
 )
 
+//go:embed web/dist
+var embeddedFiles embed.FS
+
 func init() {
 	// 初始化日志
 	autoLog.Init()
 	config.InitDB()
 	defer autoLog.Sync()
-
-	////判断目录是否设置正确
-	//exists, err := bgiStatus.CheckConfig()
-	//if !exists {
-	//	fmt.Println(err)
-	//	//程序暂停，任意键退出
-	//	fmt.Println("=======程序暂停，任意键退出=========")
-	//	fmt.Scanln()
-	//	os.Exit(1)
-	//}
-}
-
-func findLastJSONLine(filename string) (string, error) {
-	file, err := os.Open(filename)
+	ips, err := tools.GetLocalIPs()
 	if err != nil {
-		return "未知", err
-	}
-	defer file.Close()
-
-	var lastJSONLine string
-	scanner := bufio.NewScanner(file)
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.Contains(line, "→ 脚本执行") {
-			lastJSONLine = line
+		autoLog.Sugar.Infof("获取本机IP失败: %v", err)
+	} else {
+		for _, ip := range ips {
+			autoLog.Sugar.Infof("本机IP: %s%s", ip, config.Cfg.Post)
 		}
 	}
-
-	if err := scanner.Err(); err != nil {
-		return "", err
-	}
-
-	if lastJSONLine == "" {
-		return "", fmt.Errorf("no line containing '.json' found")
-	}
-
-	return lastJSONLine, nil
-}
-
-func toJson(v interface{}) template.JS {
-	a, _ := json.Marshal(v)
-	return template.JS(a)
 }
 
 var upgrader = websocket.Upgrader{
@@ -87,63 +55,45 @@ var upgrader = websocket.Upgrader{
 	},
 }
 
-//go:embed html/*
-var htmlFS embed.FS
+var imageList []string
+var imageListOnce sync.Once
 
-//go:embed static/*
-var staticFiles embed.FS
+func loadImages() {
+	imageDir := "./img"
+	filepath.WalkDir(imageDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			ext := filepath.Ext(d.Name())
+			switch ext {
+			case ".jpg", ".jpeg", ".png", ".gif", ".webp":
+				imageList = append(imageList, "/img/"+d.Name())
+			}
+		}
+		autoLog.Sugar.Infof("加载图片: %s", path)
+		return nil
+	})
+}
 
 func main() {
-
-	useEmbed := flag.Bool("embed", false, "是否将 static 目录打包进程序")
-	flag.Parse()
 
 	gin.SetMode(gin.ReleaseMode)
 
 	//创建一个服务
 	ginServer := gin.Default()
 
-	ginServer.SetTrustedProxies(nil)
-	ginServer.Use(gzip.Gzip(gzip.DefaultCompression))
-	ginServer.Use(favicon.New("./favicon.ico"))
-
-	////加载templates中所有模板文件, 使用不同目录下名称相同的模板,注意:一定要放在配置路由之前才得行
-	//ginServer.LoadHTMLGlob("html/*")
-
-	tmpl := template.Must(
-		template.New("").Funcs(template.FuncMap{
-			"tojson": toJson,
-		}).ParseFS(htmlFS, "html/*.html"),
-	)
-
-	ginServer.SetHTMLTemplate(tmpl)
-
-	if *useEmbed {
-		// 使用 embed 打包的静态文件
-		staticFS := http.FS(staticFiles)
-		ginServer.StaticFS("/static", staticFS)
-		ginServer.GET("/test", func(c *gin.Context) {
-			c.String(200, "使用的是 embed 打包的 static")
-		})
-	} else {
-		// 使用本地目录（开发模式）
-		ginServer.Static("/static", "static")
-		ginServer.GET("/test", func(c *gin.Context) {
-			c.String(200, "使用的是本地 static 目录")
-		})
+	// 创建嵌入的文件系统
+	distFS, err := fs.Sub(embeddedFiles, "web/dist")
+	if err != nil {
+		autoLog.Sugar.Fatalf("无法创建嵌入文件系统: %v", err)
 	}
 
-	//// 提供静态资源服务，把 html 目录映射为 /static 路径
-	//ginServer.Static("/static", "static")
-
-	ginServer.GET("/log", func(context *gin.Context) {
-
-		// 传递给模板
-		context.HTML(http.StatusOK, "log.html", nil)
-	})
+	ginServer.SetTrustedProxies(nil)
+	ginServer.Use(gzip.Gzip(gzip.DefaultCompression))
 
 	//查询今日所有日志文件
-	ginServer.GET("/logFiles", func(c *gin.Context) {
+	ginServer.GET("/api/logFiles", func(c *gin.Context) {
 		filePath := filepath.Clean(fmt.Sprintf("%s\\log", config.Cfg.BetterGIAddress)) // 本地日志路径
 		files, err := bgiStatus.FindLogFiles(filePath)
 		if err != nil {
@@ -201,13 +151,8 @@ func main() {
 		}
 	})
 
-	ginServer.GET("/", func(c *gin.Context) {
-		// 传递给模板
-		c.HTML(http.StatusOK, "index.html", nil)
-	})
-
 	//日志查询
-	ginServer.GET("/index", func(c *gin.Context) {
+	ginServer.GET("/api/index", func(c *gin.Context) {
 		// 生成日志文件名
 		date := time.Now().Format("20060102")
 
@@ -215,7 +160,10 @@ func main() {
 
 		filePath := filepath.Clean(fmt.Sprintf("%s\\log", config.Cfg.BetterGIAddress)) // 本地日志路径
 		files, err := bgiStatus.FindLogFiles(filePath)
-		fmt.Println(files)
+		if len(files) == 0 {
+			autoLog.Sugar.Errorf("日志文件不存在")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "日志文件不存在"})
+		}
 		if err == nil {
 			//获取最后一个文件
 			filename = filepath.Clean(fmt.Sprintf("%s\\log\\%s", config.Cfg.BetterGIAddress, files[0]))
@@ -228,7 +176,7 @@ func main() {
 		GetGroup := "未知"
 		timestamp := "未知"
 
-		line, err := findLastJSONLine(filename)
+		line, err := bgiStatus.FindLastExecLine(filename)
 		if err != nil {
 			autoLog.Sugar.Errorf("findLastJSONLine-Error: %v\n", err)
 		} else {
@@ -254,7 +202,7 @@ func main() {
 
 		running := bgiStatus.IsWechatRunning()
 
-		jsProgress, err := bgiStatus.JsProgress(filename, "当前进度：(.*?)")
+		jsProgress, err := bgiStatus.JsProgress(filename, "当前进度：(.*?)", "当前次数：(.*?)")
 		if err != nil {
 			jsProgress = "无"
 		}
@@ -269,11 +217,6 @@ func main() {
 
 		c.JSON(http.StatusOK, data)
 
-	})
-
-	ginServer.GET("/archive", func(c *gin.Context) {
-		// 传递给模板
-		c.HTML(http.StatusOK, "archive.html", nil)
 	})
 
 	//查询归档列表查询
@@ -301,22 +244,33 @@ func main() {
 		c.String(http.StatusOK, "删除成功")
 	})
 
+	// 删除全部归档记录
+	ginServer.DELETE("/api/allArchives", func(c *gin.Context) {
+		_, err := config.DB.Exec("DELETE FROM archive_records")
+		if err != nil {
+			c.String(http.StatusInternalServerError, "删除失败")
+			return
+		}
+
+		c.String(http.StatusOK, "删除成功")
+	})
+
 	//一条龙
-	ginServer.POST("/oneLong", func(context *gin.Context) {
+	ginServer.POST("/api/oneLong", func(context *gin.Context) {
 
 		task.OneLongTask()
 
 		context.JSON(http.StatusOK, gin.H{"status": "received", "data": "一条龙启动成功"})
 	})
 
-	ginServer.POST("/closeBgi", func(context *gin.Context) {
+	ginServer.POST("/api/closeBgi", func(context *gin.Context) {
 
 		control.CloseSoftware()
 
 		context.JSON(http.StatusOK, gin.H{"status": "received", "data": "BGI关闭成功"})
 	})
 
-	ginServer.POST("/closeYuanShen", func(context *gin.Context) {
+	ginServer.POST("/api/closeYuanShen", func(context *gin.Context) {
 
 		control.CloseYuanShen()
 
@@ -324,7 +278,7 @@ func main() {
 	})
 
 	//发送截图
-	ginServer.POST("/getImage", func(c *gin.Context) {
+	ginServer.POST("/api/sendImage", func(c *gin.Context) {
 
 		err := control.ScreenShot()
 		if err != nil {
@@ -342,36 +296,9 @@ func main() {
 
 	})
 
-	//webhook接口
-	ginServer.POST("/webhook", func(c *gin.Context) {
-		var j map[string]interface{}
-
-		// 绑定JSON数据到map
-		if err := c.ShouldBindJSON(&j); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-
-		autoLog.Sugar.Infof("webhook:%s", j["message"])
-
-		c.JSON(http.StatusOK, gin.H{"status": "received", "data": j})
-	})
-
-	//米游社签到
-	ginServer.POST("/MysSignIn", func(context *gin.Context) {
-
-		err := control.HttpGet("http://localhost:8888/qd")
-		if err != nil {
-			context.JSON(http.StatusBadRequest, gin.H{"status": "received", "data": err})
-			return
-		}
-		context.JSON(http.StatusOK, gin.H{"status": "received", "data": "米游社签到成功"})
-		return
-	})
-
 	//背包统计
-	ginServer.GET("/BagStatistics", func(context *gin.Context) {
-		statistics, err := bgiStatus.BagStatistics()
+	ginServer.GET("/api/BagStatistics", func(context *gin.Context) {
+		statistics, _ := bgiStatus.BagStatistics()
 
 		// 按材料名称排序，再按日期排序
 		sort.Slice(statistics, func(i, j int) bool {
@@ -386,20 +313,8 @@ func main() {
 			return ti.Before(tj)
 		})
 
-		if err != nil {
-			// 传递给模板
-			context.HTML(http.StatusOK, "bg.html", gin.H{
-				"title": "背包统计",
-				"items": nil,
-			})
-			return
-		}
+		context.JSON(http.StatusOK, statistics)
 
-		// 传递给模板
-		context.HTML(http.StatusOK, "bg.html", gin.H{
-			"title": "背包统计",
-			"items": statistics,
-		})
 	})
 
 	//删除背包统计记录
@@ -425,7 +340,7 @@ func main() {
 	})
 
 	//查询所有配置组
-	ginServer.GET("/listGroups", func(context *gin.Context) {
+	ginServer.GET("/api/listGroups", func(context *gin.Context) {
 		groups, err := task.ListGroups()
 		if err != nil {
 			return
@@ -433,23 +348,21 @@ func main() {
 
 		autoLog.Sugar.Infof("查询所有配置组:%s", groups)
 
-		// 传递给模板
-		context.HTML(http.StatusOK, "listGroups.html", gin.H{
-			"title": "调度器",
-			"items": groups,
-		})
+		context.JSON(http.StatusOK, groups)
+
 	})
 
 	//启动配置组
-	ginServer.POST("/startGroups", func(context *gin.Context) {
+	ginServer.POST("/api/startGroups", func(context *gin.Context) {
 
-		var data map[string]string
+		var data []string
 		err := context.BindJSON(&data)
 		if err != nil {
 			fmt.Println("err:", err)
 			return
 		}
-		task.StartGroups(data["name"])
+
+		err = task.StartGroups(data)
 		if err != nil {
 			return
 		}
@@ -457,28 +370,31 @@ func main() {
 	})
 
 	//查询狗粮日志
-	ginServer.GET("/getAutoArtifactsPro", func(context *gin.Context) {
+	ginServer.GET("/api/getAutoArtifactsPro", func(context *gin.Context) {
 
 		pro, err := bgiStatus.GetAutoArtifactsPro()
 		autoLog.Sugar.Infof("狗粮记录:%s", pro)
 
 		//获取版本号
-		version := bgiStatus.ReadVersion(fmt.Sprintf("%s\\User\\JsScript\\AutoArtifactsPro", config.Cfg.BetterGIAddress))
+		version := bgiStatus.ReadVersion(fmt.Sprintf("%s\\User\\JsScript\\AAA-Artifacts-Bulk-Supply", config.Cfg.BetterGIAddress))
 
 		//查询更新状态
-		jsVersion := bgiStatus.JsVersion("AutoArtifactsPro", version)
+		jsVersion := bgiStatus.JsVersion("AAA-Artifacts-Bulk-Supply", version)
 
 		if err != nil {
 			// 传递给模板
-			context.HTML(http.StatusOK, "AutoArtifactsPro.html", gin.H{
-				"title":     "狗粮收益查询" + "【" + version + "】",
+
+			context.JSON(http.StatusInternalServerError, gin.H{
+				"title":     "狗粮批发查询" + "【" + version + "】",
 				"JsVersion": jsVersion,
 				"items":     nil,
 			})
+
 			return
 		}
-		context.HTML(http.StatusOK, "AutoArtifactsPro.html", gin.H{
-			"title":     "狗粮收益查询" + "【" + version + "】",
+
+		context.JSON(http.StatusOK, gin.H{
+			"title":     "狗粮批发查询" + "【" + version + "】",
 			"JsVersion": jsVersion,
 			"items":     pro,
 		})
@@ -486,13 +402,11 @@ func main() {
 	})
 
 	//查询狗粮日志
-	ginServer.GET("/getAutoArtifactsPro2", func(context *gin.Context) {
+	ginServer.GET("/api/getAutoArtifactsPro2", func(context *gin.Context) {
 
 		fileName := context.Query("fileName")
 		if fileName == "" {
-			context.HTML(http.StatusInternalServerError, "error.html", gin.H{
-				"error": fmt.Errorf("文件名不能为空"),
-			})
+			context.JSON(http.StatusBadRequest, gin.H{"error": "fileName不能为空"})
 			return
 		}
 		data, err := bgiStatus.GetAutoArtifactsPro2(fileName)
@@ -508,19 +422,13 @@ func main() {
 			return
 		}
 
-		// 正常页面渲染
-		context.HTML(http.StatusOK, "AutoArtifactsPro2.html", gin.H{
-			"title": "狗粮日志查询",
+		context.JSON(http.StatusOK, gin.H{
 			"items": data,
 		})
+
 	})
 
-	//日志分析
-	ginServer.GET("/logAnalysis", func(context *gin.Context) {
-
-		context.HTML(http.StatusOK, "logAnalysis.html", nil)
-	})
-
+	//查询收获前10的材料
 	ginServer.GET("/api/logAnalysis", func(context *gin.Context) {
 		fileName := context.Query("file")
 
@@ -528,16 +436,6 @@ func main() {
 
 		context.JSON(200, res)
 
-	})
-
-	//自动更新仓库脚本仓库和地图追踪
-	ginServer.POST("/autoUpdateJsAndPathing", func(context *gin.Context) {
-		err := bgiStatus.UpdateJsAndPathing()
-		if err != nil {
-			context.JSON(http.StatusBadRequest, gin.H{"status": "received", "data": err})
-			return
-		}
-		context.JSON(http.StatusOK, gin.H{"status": "received", "data": "更新成功"})
 	})
 
 	//备份文件
@@ -548,24 +446,6 @@ func main() {
 			return
 		}
 		context.JSON(http.StatusOK, gin.H{"status": "received", "data": "备份成功"})
-	})
-
-	ginServer.GET("/CalculateTaskEnabledList", func(context *gin.Context) {
-		list, err := task.CalculateTaskEnabledList()
-		if err != nil {
-			context.String(http.StatusInternalServerError, "任务状态读取失败: %v", err)
-			return
-		}
-
-		// 渲染 HTML 模板
-		context.HTML(http.StatusOK, "CalculateTaskEnabledList.html", gin.H{
-			"title": "配置组执行",
-			"tasks": list,
-		})
-	})
-
-	ginServer.GET("/other", func(context *gin.Context) {
-		context.HTML(http.StatusOK, "other.html", nil)
 	})
 
 	//获取仓库提交记录（最新的10条）
@@ -616,26 +496,6 @@ func main() {
 		})
 	})
 
-	//读取statuc文件夹所有的图片
-	ginServer.GET("/images", func(context *gin.Context) {
-
-		files, err := os.ReadDir("./static/image")
-
-		if err != nil {
-			context.JSON(http.StatusInternalServerError, gin.H{"status": "error", "message": err.Error()})
-			return
-		}
-
-		var imageNames []string
-		for _, file := range files {
-			if !file.IsDir() {
-				imageNames = append(imageNames, file.Name())
-			}
-		}
-
-		context.JSON(http.StatusOK, gin.H{"status": "success", "data": imageNames})
-	})
-
 	ginServer.POST("/api/archive", func(c *gin.Context) {
 		var req map[string]interface{}
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -648,11 +508,6 @@ func main() {
 	})
 
 	//日志分析
-	ginServer.GET("/LogAnalysis2Page", func(context *gin.Context) {
-
-		context.HTML(http.StatusOK, "log_analysis.html", nil)
-	})
-
 	ginServer.GET("/api/LogAnalysis2Page", func(context *gin.Context) {
 		fileName := context.Query("file")
 		if fileName == "" {
@@ -663,10 +518,6 @@ func main() {
 		results := bgiStatus.LogAnalysis2(fileName)
 
 		context.JSON(http.StatusOK, gin.H{"status": "success", "data": results})
-	})
-
-	ginServer.GET("/jsNames", func(context *gin.Context) {
-		context.HTML(http.StatusOK, "jsNames.html", nil)
 	})
 
 	//查询关注脚本情况
@@ -699,10 +550,6 @@ func main() {
 		// 成功返回
 		context.JSON(200, gin.H{"success": true})
 
-	})
-
-	ginServer.GET("/Config", func(context *gin.Context) {
-		context.HTML(http.StatusOK, "Config.html", nil)
 	})
 
 	//查询配置文件
@@ -739,7 +586,6 @@ func main() {
 		//重新加载配置文件
 		_ = config.ReloadConfig()
 		time.Sleep(1 * time.Second)
-		//c.JSON(http.StatusOK, gin.H{"status": "success", "message": "配置保存成功"})
 
 		// 调用重启脚本
 		cmd := exec.Command("cmd", "/c", "restart.bat")
@@ -802,10 +648,6 @@ func main() {
 			"status": "success",
 			"data":   results,
 		})
-	})
-
-	ginServer.GET("/onelong", func(context *gin.Context) {
-		context.HTML(http.StatusOK, "onelong.html", nil)
 	})
 
 	// 获取一条龙配置
@@ -886,6 +728,26 @@ func main() {
 		})
 	})
 
+	//读取js的md文件
+	ginServer.GET("/api/md", func(c *gin.Context) {
+		filePath := c.Query("filePath")
+
+		jsMd := bgiStatus.ReadMd(filePath)
+		c.JSON(http.StatusOK, gin.H{"status": "success", "data": jsMd})
+
+	})
+
+	//webhook
+	ginServer.POST("/webhook", func(c *gin.Context) {
+		var payload map[string]interface{}
+		if err := c.ShouldBindJSON(&payload); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid payload"})
+			return
+		}
+
+		fmt.Println("===============webhook", payload)
+	})
+
 	//检查BGI状态
 	go bgiStatus.CheckBetterGIStatus()
 	//更新仓库
@@ -905,15 +767,19 @@ func main() {
 	}
 
 	//实时读取文件
-	//go bgiStatus.ReadLog()
 	go bgiStatus.LogM()
 
-	go task.UpdateCode()
+	if config.Cfg.OneRemote.IsMonitor {
+		go bgiStatus.Log1Remote()
+		autoLog.Sugar.Infof("1Remote监控开启状态")
+	}
 
 	//米游社自动签到
+	mysConfig.LoadConfig("mysConfig.yaml")
 	if config.Cfg.MySign.IsMySignIn {
 
 		go task.MysSignIn()
+
 		autoLog.Sugar.Infof("米游社自动签到开启状态")
 	} else {
 		autoLog.Sugar.Infof("米游社自动签到关闭状态")
@@ -928,21 +794,116 @@ func main() {
 		autoLog.Sugar.Infof("一条龙关闭状态")
 	}
 
-	//服务器端口
+	// 1. 静态资源挂载（直接让前端可以访问图片）
+	ginServer.Static("/img", "./img")
+
+	imageListOnce.Do(loadImages) // 只加载一次
+
+	// 2. API：返回所有图片的 URL
+	ginServer.GET("/api/images", func(c *gin.Context) {
+		c.Header("Cache-Control", "public, max-age=86400")
+		c.Header("Expires", time.Now().AddDate(0, 0, 3).Format(http.TimeFormat))
+		c.JSON(200, gin.H{"images": imageList})
+
+	})
+
+	// 静态文件服务（放在所有API路由之后）
+	ginServer.StaticFS("/assets", http.FS(distFS))
+
+	// Vue Router history 支持和静态文件服务
+	ginServer.NoRoute(func(c *gin.Context) {
+		if strings.HasPrefix(c.Request.URL.Path, "/api") {
+			c.JSON(http.StatusNotFound, gin.H{"error": "API not found"})
+			return
+		}
+
+		// 尝试从嵌入文件系统中获取请求的文件
+		requestPath := strings.TrimPrefix(c.Request.URL.Path, "/")
+		if requestPath == "" {
+			requestPath = "index.html"
+		}
+
+		file, err := distFS.Open(requestPath)
+		if err != nil {
+			// 如果文件不存在，返回index.html（SPA支持）
+			indexFile, err := distFS.Open("index.html")
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "无法读取index.html"})
+				return
+			}
+			defer indexFile.Close()
+
+			indexContent, err := io.ReadAll(indexFile)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "无法读取index.html内容"})
+				return
+			}
+
+			c.Data(http.StatusOK, "text/html; charset=utf-8", indexContent)
+			return
+		}
+		defer file.Close()
+
+		// 读取并返回请求的文件
+		content, err := io.ReadAll(file)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "无法读取文件内容"})
+			return
+		}
+
+		// 根据文件扩展名设置Content-Type
+		contentType := "application/octet-stream"
+		if strings.HasSuffix(requestPath, ".html") {
+			contentType = "text/html; charset=utf-8"
+		} else if strings.HasSuffix(requestPath, ".css") {
+			contentType = "text/css; charset=utf-8"
+		} else if strings.HasSuffix(requestPath, ".js") {
+			contentType = "application/javascript; charset=utf-8"
+		} else if strings.HasSuffix(requestPath, ".json") {
+			contentType = "application/json; charset=utf-8"
+		} else if strings.HasSuffix(requestPath, ".png") {
+			contentType = "image/png"
+		} else if strings.HasSuffix(requestPath, ".jpg") || strings.HasSuffix(requestPath, ".jpeg") {
+			contentType = "image/jpeg"
+		} else if strings.HasSuffix(requestPath, ".ico") {
+			contentType = "image/x-icon"
+		}
+
+		c.Data(http.StatusOK, contentType, content)
+	})
+
+	if len(os.Args) > 1 {
+		if os.Args[1] == "oneLong" {
+			task.OneLong()
+			autoLog.Sugar.Infof("一条龙启动")
+		}
+	}
+
+	////服务器端口
 	post := config.Cfg.Post
 	if post == "" {
 		post = ":8082"
 	}
-	err := ginServer.Run(post)
+	err = ginServer.Run(post)
 
 	if err != nil {
 		autoLog.Sugar.Errorf("启动失败:%v", err)
 		return
 	}
-	autoLog.Sugar.Infof("启动成功")
+
+	//err = ginServer.RunTLS(post, "certFile/cert.pem", "certFile/key.pem")
+	//if err != nil {
+	//	autoLog.Sugar.Errorf("启动失败:%v", err)
+	//}
+
 }
 
-//go build
-//go build -embed
+//前端打包
+//cd web
+//npm run build
 
-//测试
+//后端打包：
+//go build
+
+//打包脚本
+//  build.bat
